@@ -9,18 +9,19 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Run Circuit Analysis Pipeline')
     
     # Required arguments
-    parser.add_argument('--gpu', type=str, default='2',
+    parser.add_argument('--gpu', type=str, default='0',
                        help='GPU device number')
     parser.add_argument('--dataset', type=str, default='imagenet',
                        help='Dataset name')
-    parser.add_argument('--model', type=str, default='vit',
+    parser.add_argument('--model', type=str, default='resnet50',
                        help='Model name')
     parser.add_argument('--tgt_sample', type=int, required=True,
                        help='Target sample index to analyze')
     parser.add_argument('--pot_threshold', type=float, default=95,
                        help='Percentile threshold for Peak Over Threshold method')
     parser.add_argument('--save_plots', type=bool, default=True,
-                       help='Save plots of filtered channels')
+                       help='Save plots')
+    
     return parser.parse_args()
 
 def run_find_active_channels(args) -> str:
@@ -30,22 +31,23 @@ def run_find_active_channels(args) -> str:
         '--gpu', args.gpu,
         '--dataset', args.dataset,
         '--model', args.model,
-        '--tgt_sample', str(args.tgt_sample)
+        '--tgt_sample', str(args.tgt_sample),
+        '--pot_threshold', str(args.pot_threshold)
     ]
     
     print("Finding active channels...")
     subprocess.run(cmd, check=True)
     
     # Construct path to output pickle file
-    samples_dir = f"/data3/dahee/Concepts/results/{args.model}/{args.dataset}"
-    save_dir = os.path.join(samples_dir, f"{args.tgt_sample}")
+    samples_dir = f"/data8/dahee/circuit/results/{args.model}/{args.dataset}"
+    save_dir = os.path.join(samples_dir, f"pot_{int(args.pot_threshold)}/{args.tgt_sample}")
     pickle_path = os.path.join(save_dir, f'active_channels_sample_{args.tgt_sample}.pkl')
     
     return pickle_path
 
 def get_metadata_path(args) -> str:
     """Get path to the metadata file."""
-    samples_dir = f"/data3/dahee/Concepts/results/{args.model}/{args.dataset}"
+    samples_dir = f"/data8/dahee/circuit/results/{args.model}/{args.dataset}/pot_{int(args.pot_threshold)}"
     save_dir = os.path.join(samples_dir, f"{args.tgt_sample}")
     os.makedirs(save_dir, exist_ok=True)
     return os.path.join(save_dir, 'metadata.json')
@@ -66,7 +68,7 @@ def run_main_analysis(args, layer_name: str, channel_idx: int):
         '--gpu', args.gpu,
         '--dataset', args.dataset,
         '--model', args.model,
-        '--src_layer', layer_name,
+        '--src_layer_block', layer_name,
         '--src_channel', str(channel_idx),
         '--tgt_sample', str(args.tgt_sample),
         '--pot_threshold', str(args.pot_threshold),
@@ -74,31 +76,23 @@ def run_main_analysis(args, layer_name: str, channel_idx: int):
     ]
     
     print(f"\nAnalyzing layer {layer_name}, channel {channel_idx}...")
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error running analysis for layer {layer_name}, channel {channel_idx}")
-        print(f"Exit code: {e.returncode}")
-        print(f"Error output:\n{e.stderr}")
-        print("\nSkipping to next channel...")
+    subprocess.run(cmd, check=True)
 
 def filter_valid_channels(active_channels: List[Tuple[str, int]]) -> List[Tuple[str, int]]:
-    """Filter out last encoder layer."""
+    """Filter out channels from layer4_block2."""
+    # return [(layer, channel) for layer, channel in active_channels 
+            # if layer == 'layer2_block1']
     return [(layer, channel) for layer, channel in active_channels 
-            if not layer.endswith('_11')]  # ViT-B/16 has 12 layers (0-11)
+            if layer != 'layer4_block2' and layer != 'layer4_block1']
+
 
 def main():
     args = parse_args()
     
     # First, run find_active_channels.py
-    try:
-        pickle_path = run_find_active_channels(args)
-    except subprocess.CalledProcessError as e:
-        print("Error running find_active_channels.py")
-        print(f"Exit code: {e.returncode}")
-        print(f"Error output:\n{e.stderr}")
-        return
+    pickle_path = run_find_active_channels(args)
     
+    print(pickle_path)
     # Load the results
     with open(pickle_path, 'rb') as f:
         active_channels = pickle.load(f)
@@ -108,7 +102,7 @@ def main():
     
     metadata_path = get_metadata_path(args)
     print(f"\nFound {len(active_channels)} active channels")
-    print(f"After filtering last two layers: {len(valid_channels)} channels remain")
+    print(f"After filtering layer4_block1&2: {len(valid_channels)} channels remain")
 
     # Run main.py for each valid channel that hasn't been searched
     skipped = 0
@@ -121,9 +115,10 @@ def main():
             skipped += 1
             continue
             
-        success = run_main_analysis(args, layer_name, channel_idx)
+        run_main_analysis(args, layer_name, channel_idx)
     
-    # Final count of skipped and failed channels
+        
+    # Final count of skipped channels
     print(f"\nCircuit analysis pipeline completed!")
     print(f"Skipped {skipped} among {len(valid_channels)} channels.")
 

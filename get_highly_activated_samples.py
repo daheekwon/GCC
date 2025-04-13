@@ -8,10 +8,12 @@ from torch.utils.data import DataLoader
 import numpy as np
 import pickle
 import heapq
-from torchvision.models import vit_b_16, ViT_B_16_Weights
 
 MODEL_CONFIGS = {
-    'vit': {'hidden_dim': 768}  # ViT-B/16 hidden dimension
+    'resnet18': {'channels': [64, 128, 256, 512]},
+    'resnet34': {'channels': [64, 128, 256, 512]},
+    'resnet50': {'channels': [256, 512, 1024, 2048]},
+    'resnet101': {'channels': [256, 512, 1024, 2048]},
 }
 
 class IntermediateLayerGetter(nn.Module):
@@ -20,14 +22,15 @@ class IntermediateLayerGetter(nn.Module):
         self.model = model
         self.activations = {}
         
-        # Register hooks for each encoder layer
+        # Register hooks for each block within each layer
         self.hooks = []
-        for layer_idx, layer in enumerate(model.encoder.layers):
-            name = f'encoder_layer_{layer_idx}'
-            hook = layer.register_forward_hook(
-                lambda m, inp, out, name=name: self.activations.update({name: out})
-            )
-            self.hooks.append(hook)
+        for layer_idx, layer in enumerate([model.layer1, model.layer2, model.layer3, model.layer4]):
+            for block_idx, block in enumerate(layer):
+                name = f'layer{layer_idx + 1}_block{block_idx}'
+                hook = block.register_forward_hook(
+                    lambda m, inp, out, name=name: self.activations.update({name: out})
+                )
+                self.hooks.append(hook)
                 
     def forward(self, x):
         _ = self.model(x)
@@ -38,22 +41,18 @@ class IntermediateLayerGetter(nn.Module):
             hook.remove()
 
 def get_top_k_activations(feature_map, k=0.1):
-    """Calculate mean of top k% features for each hidden dimension.
+    """Calculate mean of top k% pixels for each channel more efficiently."""
+    B, C, H, W = feature_map.shape
+    k_pixels = int(H * W * k)
     
-    For ViT, feature_map shape is (batch_size, sequence_length, hidden_dim)
-    """
-    B, S, H = feature_map.shape
-    k_tokens = int(S * k)  # Number of tokens to consider (excluding CLS token)
+    # More memory efficient reshape
+    feature_map_flat = feature_map.permute(0, 1, 2, 3).reshape(B, C, -1)
     
-    # Skip CLS token (first token) and reshape
-    feature_map = feature_map[:, 1:, :]  # Remove CLS token
-    feature_map_flat = feature_map.reshape(B, -1, H)
+    # Use torch.kthvalue instead of topk for memory efficiency
+    top_k_vals = torch.sort(feature_map_flat, dim=2, descending=True)[0]
+    top_k_vals = top_k_vals[:, :, :k_pixels]
     
-    # Get top k values for each feature
-    top_k_vals = torch.sort(feature_map_flat, dim=1, descending=True)[0]
-    top_k_vals = top_k_vals[:, :k_tokens, :]
-    
-    return top_k_vals.mean(dim=1)  # Average over top k tokens
+    return top_k_vals.mean(dim=2)
 
 def save_checkpoint(results, args):
     """Save intermediate results to a checkpoint file."""
@@ -68,11 +67,11 @@ def save_checkpoint(results, args):
     
     # Convert current heaps to sorted lists
     checkpoint_results = {}
-    for layer_name, features in results.items():
-        checkpoint_results[layer_name] = {}
-        for feature_idx, heap in enumerate(features):
+    for block_name, channels in results.items():
+        checkpoint_results[block_name] = {}
+        for channel_idx, heap in enumerate(channels):
             sorted_data = sorted(heap, reverse=True)
-            checkpoint_results[layer_name][feature_idx] = [idx for _, idx in sorted_data]
+            checkpoint_results[block_name][channel_idx] = [idx for _, idx in sorted_data]
     
     try:
         with open(checkpoint_file, 'wb') as f:
@@ -83,10 +82,10 @@ def save_checkpoint(results, args):
 def main():
     # Add arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output_dir', type=str, default='/data3/dahee/Concepts/results',
+    parser.add_argument('--output_dir', type=str, default='/data8/dahee/circuit/results',
                       help='Base directory for saving results')
-    parser.add_argument('--model_name', type=str, default='vit',
-                      help='Model name (default: vit)')
+    parser.add_argument('--model_name', type=str, default='resnet50',
+                      help='Model name (default: resnet50)')
     parser.add_argument('--dataset_name', type=str, default='imagenet',
                       help='Dataset name (default: imagenet)')
     parser.add_argument('--class_idx', type=int, default=None,
@@ -107,7 +106,7 @@ def main():
     ])
     
     if args.dataset_name == 'imagenet':
-        val_dir = '/ILSVRC/val'
+        val_dir = '/data/ImageNet1k/val'  # Replace with your ImageNet validation path
         val_dataset = datasets.ImageFolder(val_dir, transform=transform)
         if args.class_idx is not None:
             subset_indices = (torch.tensor(val_dataset.targets) == args.class_idx).nonzero().squeeze().tolist()
@@ -121,9 +120,15 @@ def main():
             pin_memory=True
         )
     
-    # Load pretrained ViT
-    if args.model_name == 'vit':
-        model = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
+    # Load pretrained ResNet
+    if args.model_name == 'resnet50':
+        model = torchvision.models.resnet50(pretrained=True)
+    elif args.model_name == 'resnet18':
+        model = torchvision.models.resnet18(pretrained=True)
+    elif args.model_name == 'resnet34':
+        model = torchvision.models.resnet34(pretrained=True)
+    elif args.model_name == 'resnet101':
+        model = torchvision.models.resnet101(pretrained=True)
     model.eval()
     model = model.to(device)
     
@@ -135,25 +140,32 @@ def main():
     if args.model_name not in MODEL_CONFIGS:
         raise ValueError(f"Unsupported model: {args.model_name}")
     
-    # Initialize results for each encoder layer
+    # Use model specific channel sizes
+    channels = MODEL_CONFIGS[args.model_name]['channels']
+    
+    # Initialize results with the new naming structure
     results = {}
-    hidden_dim = MODEL_CONFIGS[args.model_name]['hidden_dim']
-    for layer_idx in range(len(model.encoder.layers)):
-        layer_name = f'encoder_layer_{layer_idx}'
-        results[layer_name] = [[] for _ in range(hidden_dim)]
+    for layer_idx in range(4):
+        for block_idx in range(len(model.layer1 if layer_idx == 0 else 
+                              model.layer2 if layer_idx == 1 else 
+                              model.layer3 if layer_idx == 2 else 
+                              model.layer4)):
+            block_name = f'layer{layer_idx + 1}_block{block_idx}'
+            channel_size = channels[layer_idx]
+            results[block_name] = [[] for _ in range(channel_size)]
     
     # Optimize data loading
     val_loader = DataLoader(
         val_dataset,
-        batch_size=256,
+        batch_size=256,  # Increased batch size
         shuffle=False,
-        num_workers=16,
+        num_workers=16,  # Increased workers
         pin_memory=True,
         prefetch_factor=2,
         persistent_workers=True
     )
     
-    # Process batches
+    # Process batches more efficiently
     total_samples = len(val_dataset)
     processed_samples = 0
     last_checkpoint = 0
@@ -165,17 +177,19 @@ def main():
         with torch.no_grad(), torch.cuda.amp.autocast():
             activations = intermediate_getter(images)
             
-            for layer_name, feature_maps in activations.items():
-                top_activations = get_top_k_activations(feature_maps, k=0.1) 
-                # Process each feature dimension
-                for feature_idx in range(top_activations.shape[1]):
-                    feature_acts = top_activations[:, feature_idx]
+            for block_name, feature_maps in activations.items():
+                top_activations = get_top_k_activations(feature_maps, k=0.1)
+                
+                # Process each channel
+                for channel_idx in range(top_activations.shape[1]):
+                    channel_acts = top_activations[:, channel_idx]
                     
-                    current_heap = results[layer_name][feature_idx]
+                    # Use the new block naming convention
+                    current_heap = results[block_name][channel_idx]
                     
                     # Convert to list of (activation, index) pairs
                     batch_acts = list(zip(
-                        feature_acts.cpu().tolist(),
+                        channel_acts.cpu().tolist(),
                         torch.arange(processed_samples, processed_samples + batch_size, device=device).cpu().tolist()
                     ))
                     

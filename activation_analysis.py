@@ -8,45 +8,62 @@ import torch.nn as nn
 import torch
 from matplotlib import gridspec
 import pickle
+from pytorch_msssim import ssim
 import cv2 
 import matplotlib.gridspec as gridspec
 from typing import Dict, List, Tuple, Union
 
 class LayerActivationHelper:
-    """Helper class to manage layer access in ViT models."""
+    """Helper class to manage layer and block access in ResNet models."""
     
     @staticmethod
-    def get_target_layer(model: nn.Module, layer_name: str) -> nn.Module:
-        """Get the target encoder layer.
+    def get_target_block(model: nn.Module, layer_name: str, block_idx: int) -> nn.Module:
+        """Get the target block from specified layer.
         
         Args:
-            model: ViT model
-            layer_name: Name of layer (e.g., 'encoder_layer_0')
+            model: ResNet model
+            layer_name: Name of layer (e.g., 'layer1', 'layer2')
+            block_idx: Index of block within layer
             
         Returns:
-            Target encoder layer module
+            Target block module
+        
+        Raises:
+            ValueError: If layer_name is invalid
         """
-        layer_num = int(layer_name.split('_')[-1])
-        return model.encoder.layers[layer_num]
+        layer_mapping = {
+            'layer1': model.layer1,
+            'layer2': model.layer2, 
+            'layer3': model.layer3,
+            'layer4': model.layer4
+        }
+
+        
+        if layer_name not in layer_mapping:
+            raise ValueError(f"Invalid layer name: {layer_name}")
+            
+        return layer_mapping[layer_name][block_idx]
 
 def parse_layer_block(layer_block_str: str) -> Tuple[str, int]:
-    """Parse layer string into layer number.
+    """Parse layer_block string into layer name and block index.
     
     Args:
-        layer_block_str: String in format 'encoder_layer_X'
+        layer_block_str: String in format 'layerX_blockY'
         
     Returns:
-        Tuple of (layer_name, layer_num)
+        Tuple of (layer_name, block_idx)
         
     Example:
-        >>> parse_layer_block('encoder_layer_3')
-        ('encoder_layer', 3)
+        >>> parse_layer_block('layer3_block2')
+        ('layer3', 2)
     """
-    if not layer_block_str.startswith('encoder_layer_'):
-        raise ValueError(f"Invalid layer format: {layer_block_str}")
+    parts = layer_block_str.split('_')
+    if len(parts) != 2 or not parts[1].startswith('block'):
+        raise ValueError(f"Invalid layer_block format: {layer_block_str}")
     
-    layer_num = int(layer_block_str.split('_')[-1])
-    return 'encoder_layer', layer_num
+    layer_name = parts[0]
+    block_idx = int(parts[1][5:])  # Remove 'block' prefix
+    return layer_name, block_idx
 
 def get_channel_indices(highly_activated_samples: Dict, 
                        layer_block: str,
@@ -71,100 +88,97 @@ def get_channel_indices(highly_activated_samples: Dict,
     return channel_idx
 
 def get_activation(model: nn.Module,
-                  layer_name: str, 
+                  layer_block: str, 
                   val_dataset: Dataset,
                   image_idx: int,
-                  feature_idx: int) -> torch.Tensor:
-    """Get activation feature map for specific feature in ViT.
+                  channel_idx: int) -> torch.Tensor:
+    """Get activation feature map for specific channel.
     
     Args:
         model: The model
-        layer_name: Layer identifier (e.g., 'encoder_layer_3')
+        layer_block: Layer/block identifier (e.g., 'layer3_block2')
         val_dataset: Validation dataset
         image_idx: Index of image
-        feature_idx: Feature to extract
+        channel_idx: Channel to extract
         
     Returns:
-        Feature activation tensor
+        Channel activation tensor
     """
     activation = []
-    _, layer_num = parse_layer_block(layer_name)
+    layer_name, block_idx = parse_layer_block(layer_block)
     
     def hook_fn(module, input, output):
-        # For ViT, output shape is (batch_size, sequence_length, hidden_dim)
-        # Extract specific feature across all patch tokens
-        feature_activation = output[0, :, feature_idx]
-        activation.append(feature_activation.detach().cpu())
-    
+        channel_activation = output[:, channel_idx, :, :]
+        activation.append(channel_activation.detach().cpu())
+
     img, _ = val_dataset[image_idx]
     img = img.unsqueeze(0).cuda()
     
-    target_layer = LayerActivationHelper.get_target_layer(model, layer_name)
+    target_block = LayerActivationHelper.get_target_block(model, layer_name, block_idx)
     
     with torch.no_grad():
-        handle = target_layer.register_forward_hook(hook_fn)
+        handle = target_block.register_forward_hook(hook_fn)
         _ = model(img)
         handle.remove()
         
-    # Reshape activation to 2D for visualization
-    patch_size = int(np.sqrt(activation[0].shape[0] - 1))  # -1 for CLS token
-    act_map = activation[0][1:].reshape(patch_size, patch_size)
-    return act_map
+    return activation[0]
 
 def save_vis_images(indices, val_dataset,tgt_sample, num_images=5):
     imgs = []
     for i, idx in enumerate(indices[:num_images-1]):
         img, label = val_dataset[idx]        
+
         # Convert tensor to image for display
         img = img.permute(1, 2, 0).numpy()
         # Denormalize the image
         img = img * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
         img = np.clip(img, 0, 1)
         imgs.append((idx,img))
-    
+
+    # Add the last image
     img, label = val_dataset[tgt_sample]
+
     img = img.permute(1, 2, 0).numpy()
     img = img * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
     img = np.clip(img, 0, 1)
     imgs.append((tgt_sample, img))
-    
+
     return imgs
 
+
 def get_activation_subset(model: nn.Module,
-                        layer_name: str,
+                        layer_block: str,
                         val_dataset: Dataset,
                         indices: List[int],
-                        feature_idx: int,
+                        channel_idx: int,
                         batch_size: int = 32) -> torch.Tensor:
-    """Get full feature maps for specified features without taking mean.
+    """Get full feature maps for specified channels without taking mean.
     
     Args:
         model: The neural network model
-        layer_name: Layer identifier (e.g., 'encoder_layer_3')
+        layer_block: Layer/block identifier (e.g., 'layer3_block2')
         val_dataset: Validation dataset
         indices: List of sample indices
-        feature_idx: Feature to extract
+        channel_idx: Channel to extract
         batch_size: Batch size for processing
         
     Returns:
-        torch.Tensor: Activation maps for the specified feature
+        torch.Tensor: Activation maps for the specified channel
     """
     activations = []
-    _, layer_num = parse_layer_block(layer_name)
+    layer_name, block_idx = parse_layer_block(layer_block)
     
     def hook_fn(module, input, output):
-        # For ViT, output shape is (batch_size, sequence_length, hidden_dim)
-        # Extract specific feature across all patch tokens
-        feature_activation = output[:, :, feature_idx]
-        activations.append(feature_activation.detach().cpu())
+        channel_activation = output[:, channel_idx, :, :]
+        activations.append(channel_activation.detach().cpu())
     
     subset = Subset(val_dataset, indices)
     subset_loader = DataLoader(subset, batch_size=batch_size, shuffle=False, 
                              num_workers=4, pin_memory=True)
     
-    target_layer = LayerActivationHelper.get_target_layer(model, layer_name)
+    target_block = LayerActivationHelper.get_target_block(model, layer_name, block_idx)
     
-    with torch.no_grad(), target_layer.register_forward_hook(hook_fn):
+    with torch.no_grad(), target_block.register_forward_hook(hook_fn):
         for batch in subset_loader:
             images = batch[0].cuda()
             _ = model(images)
@@ -172,41 +186,41 @@ def get_activation_subset(model: nn.Module,
     return torch.cat(activations, dim=0)
 
 def get_output_with_modified_activation(model: nn.Module,
-                                      src_layer_name: str,
-                                      tgt_layer_name: str,
+                                      src_layer_block: str,
+                                      tgt_layer_block: str,
                                       image: torch.Tensor,
                                       original_act: torch.Tensor,
-                                      feature_idx: int) -> torch.Tensor:
-    """Get output by modifying a specific layer's output for a specific feature.
+                                      channel_idx: int) -> torch.Tensor:
+    """Get output by modifying a specific block's output for a specific channel.
     
     Args:
         model: The neural network model
-        source_layer_name: Source layer identifier (e.g., 'encoder_layer_3')
-        target_layer_name: Target layer identifier (e.g., 'encoder_layer_4')
+        source_layer_block: Source layer/block identifier (e.g., 'layer3_block2')
+        target_layer_block: Target layer/block identifier (e.g., 'layer4_block1')
         image: Input image tensor
         original_act: Original activation to modify
-        feature_idx: Feature to modify
+        channel_idx: Channel to modify
         
     Returns:
         torch.Tensor: Modified output activation
     """
     outputs = []
-    _, src_layer_num = parse_layer_block(src_layer_name)
-    _, tgt_layer_num = parse_layer_block(tgt_layer_name)
+    src_layer_name, src_block_idx = parse_layer_block(src_layer_block)
+    tgt_layer_name, tgt_block_idx = parse_layer_block(tgt_layer_block)
     
-    def hook_fn_source_layer(module, input, output):
+    def hook_fn_source_block(module, input, output):
         output_clone = output.clone()
-        output_clone[:, :, feature_idx] = original_act
+        output_clone[:, channel_idx, :, :] = original_act
         return output_clone
     
-    def hook_fn_target_layer(module, input, output):
+    def hook_fn_target_block(module, input, output):
         outputs.append(output.detach().cpu())
     
-    src_layer = LayerActivationHelper.get_target_layer(model, src_layer_name)
-    tgt_layer = LayerActivationHelper.get_target_layer(model, tgt_layer_name)
+    src_block = LayerActivationHelper.get_target_block(model, src_layer_name, src_block_idx)
+    tgt_block = LayerActivationHelper.get_target_block(model, tgt_layer_name, tgt_block_idx)
     
-    handle1 = src_layer.register_forward_hook(hook_fn_source_layer)
-    handle2 = tgt_layer.register_forward_hook(hook_fn_target_layer)
+    handle1 = src_block.register_forward_hook(hook_fn_source_block)
+    handle2 = tgt_block.register_forward_hook(hook_fn_target_block)
     
     with torch.no_grad():
         _ = model(image.unsqueeze(0).cuda())
@@ -217,34 +231,39 @@ def get_output_with_modified_activation(model: nn.Module,
     return outputs[0]
 
 def analyze_channel_score(model: nn.Module,
-                        src_layer_name: str,
-                        tgt_layer_name: str,
+                        src_layer_block: str,
+                        tgt_layer_block: str,
                         val_dataset: Dataset,
-                        feature_idx: int,
-                        src_feature: int) -> torch.Tensor:
-    """Analyzes the impact of a feature by comparing original, masked, and amplified activations.
+                        channel_idx: List[Tuple[int, List[int]]],
+                        src_channel: int) -> torch.Tensor:
+    """Analyzes the impact of a channel by comparing original, masked, and amplified activations.
     
     Args:
         model: The neural network model
-        source_layer_name: Source layer identifier (e.g., 'encoder_layer_3')
-        target_layer_name: Target layer identifier (e.g., 'encoder_layer_4')
+        source_layer_block: Source layer/block identifier (e.g., 'layer3_block2')
+        target_layer_block: Target layer/block identifier (e.g., 'layer4_block1')
         val_dataset: Validation dataset
-        feature_idx: Index of the feature to analyze
-        src_feature: Index of the feature to analyze
+        channel_idx: List of channel indices and their samples
+        src_channel: Index of the channel to analyze
     
     Returns:
-        torch.Tensor: Impact scores for the feature
+        torch.Tensor: Impact scores for the channel
     """
+    # Find the target channel in channel_idx
+    for i, (c, idx) in enumerate(channel_idx):
+        if c == src_channel:
+            break
+            
     # Get the original image
-    img, _ = val_dataset[feature_idx]
+    img, _ = val_dataset[channel_idx[i][1][-1]]
 
     # Get original activation
     input_A = get_activation_subset(
         model=model,
-        layer_name=src_layer_name,
+        layer_block=src_layer_block,
         val_dataset=val_dataset,
-        indices=[feature_idx],
-        feature_idx=src_feature
+        indices=[channel_idx[i][1][-1]],
+        channel_idx=channel_idx[i][0]
     ).squeeze()
 
     # Create masked and amplified versions
@@ -254,34 +273,34 @@ def analyze_channel_score(model: nn.Module,
     # Get outputs for different activation versions
     output_org_A = get_output_with_modified_activation(
         model=model,
-        src_layer_name=src_layer_name,
-        tgt_layer_name=tgt_layer_name,
+        src_layer_block=src_layer_block,
+        tgt_layer_block=tgt_layer_block,
         image=img,
         original_act=input_A,
-        feature_idx=src_feature
+        channel_idx=channel_idx[i][0]
     )
     
     output_masked_A = get_output_with_modified_activation(
         model=model,
-        src_layer_name=src_layer_name,
-        tgt_layer_name=tgt_layer_name,
+        src_layer_block=src_layer_block,
+        tgt_layer_block=tgt_layer_block,
         image=img,
         original_act=masked_A,
-        feature_idx=src_feature
+        channel_idx=channel_idx[i][0]
     )
     
     output_amplified_A = get_output_with_modified_activation(
         model=model,
-        src_layer_name=src_layer_name,
-        tgt_layer_name=tgt_layer_name,
+        src_layer_block=src_layer_block,
+        tgt_layer_block=tgt_layer_block,
         image=img,
         original_act=amplified_A,
-        feature_idx=src_feature
+        channel_idx=channel_idx[i][0]
     )
 
     # Calculate differences
-    diff_masked = (output_org_A[0] - output_masked_A[0]).mean(dim=0)
-    diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=0)
+    diff_masked = (output_org_A[0] - output_masked_A[0]).mean(dim=(1,2))
+    diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=(1,2))
 
     # Filter negative values
     diff_masked = torch.where(diff_masked < 0, torch.zeros_like(diff_masked), diff_masked)
