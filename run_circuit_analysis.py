@@ -4,6 +4,7 @@ import pickle
 import subprocess
 import json
 from typing import List, Tuple, Set
+from model_configs import get_model_config
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Run Circuit Analysis Pipeline')
@@ -23,6 +24,7 @@ def parse_args():
                        help='Save plots')
     
     return parser.parse_args()
+
 
 def run_find_active_channels(args) -> str:
     """Run find_active_channels.py and return path to output pickle file."""
@@ -78,31 +80,32 @@ def run_main_analysis(args, layer_name: str, channel_idx: int):
     print(f"\nAnalyzing layer {layer_name}, channel {channel_idx}...")
     subprocess.run(cmd, check=True)
 
-def filter_valid_channels(active_channels: List[Tuple[str, int]]) -> List[Tuple[str, int]]:
-    """Filter out channels from layer4_block2."""
-    # return [(layer, channel) for layer, channel in active_channels 
-            # if layer == 'layer2_block1']
-    return [(layer, channel) for layer, channel in active_channels 
-            if layer != 'layer4_block2' and layer != 'layer4_block1']
+def filter_valid_channels(active_channels: List[Tuple[str, int]], model_type: str) -> List[Tuple[str, int]]:
+    """Filter channels based on model architecture."""
+    if model_type == 'resnet':
+        return [(layer, channel) for layer, channel in active_channels 
+                if layer != 'layer4_block2']
+    elif model_type == 'vit':
 
+        return [(layer, channel) for layer, channel in active_channels 
+                if not layer.endswith('_11')]
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
 
 def main():
     args = parse_args()
+    model_config = get_model_config(args.model)
     
-    # First, run find_active_channels.py
+    # Run pipeline with model-specific handling
     pickle_path = run_find_active_channels(args)
-    
-    print(pickle_path)
-    # Load the results
     with open(pickle_path, 'rb') as f:
         active_channels = pickle.load(f)
     
-    # Filter out layer4_block2 channels
-    valid_channels = filter_valid_channels(active_channels)
+    valid_channels = filter_valid_channels(active_channels, model_config['model_type'])
     
     metadata_path = get_metadata_path(args)
     print(f"\nFound {len(active_channels)} active channels")
-    print(f"After filtering layer4_block1&2: {len(valid_channels)} channels remain")
+    print(f"After filtering the last layer: {len(valid_channels)} channels remain")
 
     # Run main.py for each valid channel that hasn't been searched
     skipped = 0

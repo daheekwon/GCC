@@ -16,5 +16,5 @@
 for ((i=4223; i<50000; i+=50))
 do
     echo "Running analysis for sample $i"
-    python run_circuit_analysis.py --tgt_sample $i --pot_threshold 90 --gpu 0
+    python run_circuit_analysis.py --tgt_sample $i --pot_threshold 80 --gpu 1 --model vit
 done

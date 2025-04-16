@@ -11,10 +11,11 @@ import pickle
 from activation_analysis import *
 import numpy as np
 import torchvision.models as models
-from torchvision.models import resnet50, ResNet50_Weights
+from torchvision.models import resnet50, ResNet50_Weights, ViT_B_16_Weights, ViT_L_16_Weights, ViT_H_14_Weights
 from scipy import stats
 from scipy import sparse  # Add this import at the top with other imports
 import json  # Add this import at the top
+from model_configs import get_model_config, create_model
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Neural Network Channel Analysis')
@@ -58,6 +59,10 @@ class CircuitAnalyzer:
         self.save_plots = args.save_plots
         self.pot_threshold = args.pot_threshold
         
+        # Get model configuration
+        self.model_config = get_model_config(self.model_name)
+        self.model_type = self.model_config['model_type']
+        
         # Setup paths
         self.samples_dir = f"/data8/dahee/circuit/results/{self.model_name}/{self.dataset}"
         if self.dataset == "imagenet":
@@ -69,8 +74,7 @@ class CircuitAnalyzer:
         
         # Load data and model
         self.val_dataset, self.val_loader = load_data(self.val_dir)
-        if self.model_name == "resnet50":
-            self.model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1).cuda()
+        self.model = create_model(self.model_name).cuda()
         self.model.eval()
         
         # Load activation samples
@@ -80,25 +84,35 @@ class CircuitAnalyzer:
         self.connection_matrices = self.initialize_connection_matrices()
         
         # Load or create metadata with model
-        self.metadata = load_or_create_metadata(self.save_dir, self.model)
+        self.metadata = load_or_create_metadata(self.save_dir, self.model, self.model_type)
 
     def initialize_connection_matrices(self):
         """Initialize sparse matrices for connections between consecutive layers."""
         connection_matrices = []
         layer_keys = list(self.avg_activated_samples.keys())
         
-        # Get dimensions directly from the model
+        # Get dimensions directly from activations
         def get_layer_dim(layer_name):
-            # Parse layer name (e.g., 'layer1_block0')
-            layer_num = int(layer_name[5])  # gets '1' from 'layer1'
-            block_num = int(layer_name.split('block')[1])
-            
-            # Get the correct layer and block
-            layer = self.model._modules[f'layer{layer_num}']
-            block = layer[block_num]
-            
-            # Get the actual output dimension from the block
-            return block.conv3.out_channels  # Use conv3 for final output channels
+            if self.model_type == 'resnet':
+                # Parse layer name (e.g., 'layer1_block0')
+                layer_num = int(layer_name[5])  # gets '1' from 'layer1'
+                block_num = int(layer_name.split('block')[1])
+                
+                # Get the correct layer and block
+                layer = self.model._modules[f'layer{layer_num}']
+                block = layer[block_num]
+                
+                # Get the actual output dimension from the block
+                return block.conv3.out_channels if hasattr(block, 'conv3') else block.conv2.out_channels
+            elif self.model_type == 'vit':  # ViT
+                # Parse layer name (e.g., 'encoder_layer_0')
+                layer_num = int(layer_name.split('_')[-1])
+                
+                # Get the correct encoder layer
+                layer = self.model.encoder.layers[layer_num]
+                
+                # Return hidden dimension (768 for ViT-B/16)
+                return layer.mlp[3].out_features
         
         # Find start index based on src_layer_block
         start_idx = layer_keys.index(self.src_layer_block)
@@ -125,7 +139,7 @@ class CircuitAnalyzer:
         if sum(normalized_scores) == 0:
             print('!!!!!!!!!!!!!!!!!!')
             print(f"Warning: No meaningful scores for {self.tgt_layer_block}")
-            return np.array([]), np.array([]), np.array([])
+            return np.array([]), np.array([]), np.array([]), np.array([])
         normalized_scores /= normalized_scores.sum()
         
         # Create linked channels mask instead of list
@@ -141,7 +155,7 @@ class CircuitAnalyzer:
         next_channel_pool = np.where(valid_mask)[0]
         
         if len(scores_ls) == 0:
-            return np.array([]), np.array([]), np.array([])
+            return np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
 
         # POT method
         threshold = np.percentile(scores_ls, self.pot_threshold)
@@ -149,8 +163,11 @@ class CircuitAnalyzer:
         exceedances = scores_ls[exceedances_mask] - threshold
         if len(exceedances) > 0:
             # Fit GPD only to exceedances
-            shape, loc, scale = stats.genpareto.fit(exceedances)
-     
+            shape, _, scale = stats.genpareto.fit(exceedances,floc=0)
+            
+            shape = np.max([shape, 0.00000000000000001])
+            scale = np.min([scale, np.std(exceedances)])
+
             # Calculate return level
             p = 0.95
             N = len(scores_ls)
@@ -158,18 +175,18 @@ class CircuitAnalyzer:
             return_level = threshold + scale/shape * ((N/Nx * (1-p))**(-shape) - 1)
 
             if return_level < 0:
-                return (np.array([]), np.array([]), np.array([]))
+                return (np.array([]), np.array([]), np.array([]), return_level, shape, scale)
             else:
                 # Apply return level threshold
                 outlier_mask = scores_ls > return_level
         else:
-            return (np.array([]), np.array([]), np.array([]))
+            return (np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]))
         
         filtered_channels = next_channel_pool[outlier_mask]
         filtered_scores = scores_ls[outlier_mask]
         
         if len(filtered_channels) == 0:
-            return (np.array([]), np.array([]), np.array([]))
+            return (np.array([]), np.array([]), np.array([]), return_level, shape, scale)
         
         # Compute activation overlaps more efficiently
         # src_activations = set(self.avg_activated_samples[self.src_layer_block][self.src_channel])
@@ -192,14 +209,25 @@ class CircuitAnalyzer:
             denom_ratios.append(ratio)
         
         # print(f"denom_ratios: {np.mean(denom_ratios), np.median(denom_ratios)}")
-        ratio_threshold = max(np.mean(denom_ratios), 0.1)  # Take maximum of mean and 0.1
+        ratio_threshold = max(np.mean(denom_ratios), 0.05)  # Take maximum of mean and 0.1
         ratio_mask = np.array(ratios) > ratio_threshold
         return (filtered_channels[ratio_mask], 
                 filtered_scores[ratio_mask],
-                np.array(ratios)[ratio_mask])
+                np.array(ratios)[ratio_mask],
+                return_level,
+                shape,
+                scale)
 
     def analyze_channel_impacts(self):
-        """Analyze channel impacts using scoring mechanism and filter results."""
+        """Analyze channel impacts using scoring mechanism."""
+        if self.model_type == 'resnet':
+            return self._analyze_resnet_channel_impacts()
+        elif self.model_type == 'vit':
+            return self._analyze_vit_channel_impacts()
+        else:
+            raise ValueError(f"Unsupported model type: {self.model_type}")
+
+    def _analyze_resnet_channel_impacts(self):
         # Get channel indices for the target sample
         channel_indices = get_channel_indices(
             self.highly_activated_samples,
@@ -209,7 +237,7 @@ class CircuitAnalyzer:
         
         if len(channel_indices) == 0:
             print(f"Warning: No channels found for target sample {self.tgt_sample} in {self.src_layer_block}")
-            return [], [], []
+            return [], [], [], [], [], []
         
         # Calculate impact scores
         scores = analyze_channel_score(
@@ -218,13 +246,43 @@ class CircuitAnalyzer:
             tgt_layer_block=self.tgt_layer_block,
             val_dataset=self.val_dataset,
             channel_idx=channel_indices,
-            src_channel=self.src_channel
+            src_channel=self.src_channel,
+            model_type=self.model_type
         )
         
         # Filter channels and get significant ones
-        filtered_channels, filtered_scores, filtered_info_scores = self.filter_channels(scores)
+        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.filter_channels(scores)
         
-        return filtered_channels, filtered_scores, filtered_info_scores
+        return filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale
+
+    def _analyze_vit_channel_impacts(self):
+        """Analyze channel impacts for ViT models."""
+        # Get channel indices for the target sample
+        channel_indices = get_channel_indices(
+            self.highly_activated_samples,
+            self.src_layer_block,
+            self.tgt_sample 
+        )
+        
+        if len(channel_indices) == 0:
+            print(f"Warning: No channels found for target sample {self.tgt_sample} in {self.src_layer_block}")
+            return [], [], [], [], [], []
+        
+        # Calculate impact scores
+        scores = analyze_channel_score(
+            model=self.model,
+            src_layer_block=self.src_layer_block,
+            tgt_layer_block=self.tgt_layer_block,
+            val_dataset=self.val_dataset,
+            channel_idx=channel_indices,
+            src_channel=self.src_channel,
+            model_type=self.model_type
+        )
+        
+        # Filter channels and get significant ones
+        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.filter_channels(scores)
+        
+        return filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale
 
     def visualize_activations(self):
         """Visualize channel activations and their feature maps."""
@@ -289,9 +347,15 @@ class CircuitAnalyzer:
                     self.tgt_layer_block,
                     self.val_dataset,
                     idx,
-                    ch_idx
+                    ch_idx,
+                    model_type=self.model_type
                 )
-                ax.imshow(activation_map.squeeze().cpu().numpy())
+
+                if self.model_type == 'resnet':
+                    activation_map = activation_map.squeeze().cpu().numpy()
+                else:
+                    activation_map = activation_map.squeeze()[1:].reshape(14, 14).cpu().numpy()
+                ax.imshow(activation_map)
                 if i == 0:
                     ax.set_ylabel(f"Channel {ch_idx}", fontsize=15)
                 ax.set_xticks([])
@@ -309,10 +373,19 @@ class CircuitAnalyzer:
     def analyze_channel_connections_iteratively(self):
         """Iteratively analyze connections starting from src_channel through all subsequent layers."""
         layer_keys = list(self.avg_activated_samples.keys())
+        
         current_src_layer_idx = layer_keys.index(self.src_layer_block)
         current_src_channels = [self.src_channel]
         
-        # Add initial source channel to metadata
+        # Add initial source channel to metadata if not exists  ####여기가 좀 다르긴 함. 
+        if self.src_layer_block not in self.metadata:
+            self.metadata[self.src_layer_block] = {
+                'searched_channels': [],
+                # 'return_levels': {},
+                # 'scale': {},
+                # 'shape': {}
+            }
+        
         if self.src_channel not in self.metadata[self.src_layer_block]['searched_channels']:
             self.metadata[self.src_layer_block]['searched_channels'].append(self.src_channel)
         
@@ -330,7 +403,22 @@ class CircuitAnalyzer:
                 self.src_layer_block = current_src_layer
                 self.src_channel = src_ch
                 self.tgt_layer_block = next_layer
-                filtered_channels, filtered_scores, filtered_info_scores = self.analyze_channel_impacts()
+
+                filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.analyze_channel_impacts()
+                
+                # Store return level in metadata
+                # if next_layer not in self.metadata[current_src_layer]['return_levels']:
+                #     self.metadata[current_src_layer]['return_levels'] = {}
+                # print(return_level)
+                # self.metadata[current_src_layer]['return_levels'][str(src_ch)] = float(return_level)
+
+                # if next_layer not in self.metadata[current_src_layer]['scale']:
+                #     self.metadata[current_src_layer]['scale'] = {}
+                # self.metadata[current_src_layer]['scale'][str(src_ch)] = float(scale)
+
+                # if next_layer not in self.metadata[current_src_layer]['shape']:
+                #     self.metadata[current_src_layer]['shape'] = {}
+                # self.metadata[current_src_layer]['shape'][str(src_ch)] = float(shape)
                 
                 if len(filtered_channels) > 0:
                     # Update connection matrix
@@ -450,7 +538,7 @@ def visualize_channel_activations(model, args, val_dataset, avg_activated_sample
     else:
         plt.show()
 
-def load_or_create_metadata(save_dir, model=None):
+def load_or_create_metadata(save_dir, model=None, model_type='resnet'):
     """Load existing metadata or create default if not exists."""
     metadata_path = os.path.join(save_dir, 'metadata.json')
     
@@ -461,18 +549,27 @@ def load_or_create_metadata(save_dir, model=None):
     # Create default metadata with layer structure automatically
     default_metadata = {}
     
-    # If no model provided, create a temporary one
-    if model is None:
-        model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
-    
-    # Get layer structure directly from model
-    for name, module in model.named_modules():
-        if name.startswith('layer') and name.count('.') == 1:  # Main layer blocks
-            layer_name = name.split('.')[0]  # e.g., 'layer1'
-            block_idx = int(name.split('.')[1])  # e.g., 0, 1, 2
-            
-            key = f'{layer_name}_block{block_idx}'
-            default_metadata[key] = {'searched_channels': []}
+    if model_type == 'resnet':
+        # ResNet layer structure
+        for layer_idx in range(1, 5):  # layer1 to layer4
+            layer = getattr(model, f'layer{layer_idx}')
+            for block_idx in range(len(layer)):
+                key = f'layer{layer_idx}_block{block_idx}'
+                default_metadata[key] = {
+                    'searched_channels': [],
+                }
+    elif model_type == 'vit':  # ViT
+        # ViT layer structure - ensure numerical ordering
+        num_layers = len(model.encoder.layers)
+        # Create sorted layer keys
+        layer_keys = [f'encoder_layer_{i}' for i in range(num_layers)]
+        # Sort numerically based on the layer number
+        layer_keys.sort(key=lambda x: int(x.split('_')[-1]))
+        
+        for key in layer_keys:
+            default_metadata[key] = {
+                'searched_channels': [],
+            }
     
     return default_metadata
 

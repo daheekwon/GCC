@@ -67,8 +67,14 @@ def main():
     # Find active channels
     active_channels = find_active_channels(highly_activated_samples, args.tgt_sample)
     
-    # Sort by layer name for better readability
-    active_channels.sort(key=lambda x: x[0])
+    # Sort by layer name with numeric order
+    def layer_sort_key(x):
+        # Extract the layer number from the name (e.g., 'encoder_layer_2' -> 2)
+        layer_num = int(x[0].split('_')[-1])
+        return layer_num
+    
+    # Sort using the custom key function
+    active_channels.sort(key=layer_sort_key)
     
     # Save results
     save_path = os.path.join(save_dir, f'active_channels_sample_{args.tgt_sample}.pkl')
