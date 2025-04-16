@@ -85,7 +85,7 @@ class CircuitAnalyzer:
         self.avg_activated_samples, self.highly_activated_samples = load_activation_samples(self.samples_dir)
         
         # Initialize matrices for layer connections
-        self.connection_matrices = self.initialize_connection_matrices()
+        # self.connection_matrices = self.initialize_connection_matrices()
         
         # Load or create metadata with model
         self.metadata = load_or_create_metadata(self.save_dir, self.model, self.model_type)

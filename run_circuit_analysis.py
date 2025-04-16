@@ -4,8 +4,11 @@ import pickle
 import subprocess
 import json
 from typing import List, Tuple, Set
+from tqdm.auto import tqdm
+
 from model_configs import get_model_config
 from find_active_channels import load_activation_samples, find_active_channels
+from main import CircuitAnalyzer
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Run Circuit Analysis Pipeline')
@@ -143,22 +146,107 @@ def main():
     print(f"\nFound {len(active_channels)} active channels")
     print(f"After filtering the last layer: {len(valid_channels)} channels remain")
 
-    # Run main.py for each valid channel that hasn't been searched
-    skipped = 0
-    for layer_name, channel_idx in valid_channels:
-        # Load searched channels once at the start
-        searched_channels = load_searched_channels(metadata_path)
+    # Search channels that have not been searched yet
+    def run_main_analysis(current_src_layer, current_src_channel, analyzer, layer_keys, visited, computed_results):
+        cache_key = (current_src_layer, current_src_channel)
 
-        if len(searched_channels) > 0 and channel_idx in searched_channels[layer_name]['searched_channels']:
-            print(f"Skipping {layer_name} channel {channel_idx} - already searched")
-            skipped += 1
+        # 이미 탐색한 노드는 재탐색 생략
+        if cache_key in visited:
+            print(f"Skipping {current_src_layer} channel {current_src_channel} - already searched")
+            return computed_results.get(cache_key, [])
+
+        visited.add(cache_key)
+
+        # Error handling
+        if current_src_layer not in layer_keys:
+            raise ValueError(f"Layer {current_src_layer} not found in layer_keys")
+
+        layer_idx = layer_keys.index(current_src_layer)
+
+        # Base case: 마지막 레이어 도달 시 종료
+        if layer_idx + 1 >= len(layer_keys):
+            computed_results[cache_key] = []
+            print(f"Reached last layer {current_src_layer} channel {current_src_channel}")
+            return []
+
+        # Setup for analysis: 분석 대상 레이어 및 채널 설정
+        next_layer = layer_keys[layer_idx + 1]
+        analyzer.src_layer_block = current_src_layer
+        analyzer.src_channel = current_src_channel
+        analyzer.tgt_layer_block = next_layer
+
+        # 스코어 기반 필터링 실행
+        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = analyzer.analyze_channel_impacts()
+
+        # 연결된 채널이 없는 경우 종료
+        if len(filtered_channels) == 0:
+            print(f"No channels found for {current_src_layer} channel {current_src_channel}")
+            computed_results[cache_key] = []
+            return []
+
+        # 현재 노드의 결과 저장
+        results = [
+            (current_src_layer, current_src_channel, next_layer, filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale)
+        ]
+
+        # If not at the stopping layer, recursively explore child channels
+        if next_layer not in {'layer4_block2', 'layers_11'}:
+            for ch in filtered_channels:
+                child_results = run_main_analysis(next_layer, ch, analyzer, layer_keys, visited, computed_results)
+                results.extend(child_results)
+
+        computed_results[cache_key] = results
+        return results
+
+
+    def save_circuit(circuit, root_layer_name, root_channel_idx, target_sample, save_dir):
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(
+            save_dir,
+            f'connection_matrices_from_{root_layer_name}_ch{root_channel_idx}.pkl'
+        )
+
+        save_data = {
+            'circuit': circuit,
+            'src_layer_block': root_layer_name,
+            'src_channel': root_channel_idx,
+            'tgt_sample': target_sample
+        }
+
+        with open(save_path, 'wb') as f:
+            pickle.dump(save_data, f)
+        print(f"Saved connection matrices to {save_path}")
+        
+    # Add dummy argument for CircuitAnalyzer
+    args.src_layer_block = None
+    args.src_channel = None
+    analyzer = CircuitAnalyzer(args)
+    layer_keys = sorted(analyzer.avg_activated_samples.keys())
+    
+    visited = set()
+    computed_results = {}
+
+    # 루트 노드 기준으로 탐색 시작
+    for root_layer_name, root_channel_idx in tqdm(valid_channels, desc="Analyzing channels", total=len(valid_channels)):
+        root_key = (root_layer_name, root_channel_idx)
+
+        if root_key in visited:
+            print(f"Root node {root_layer_name} channel {root_channel_idx} already searched — skipping.")
             continue
-            
-        run_main_analysis(args, layer_name, channel_idx)
+
+        circuit = run_main_analysis(
+            root_layer_name, root_channel_idx,
+            analyzer, layer_keys,
+            visited, computed_results
+        )
+
+        # 탐색 결과 있을 때만 저장
+        if len(circuit) > 0:
+            # save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, save_dir)
+            save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, '/project/PURE/results_circuit_v0227_POT_80/resnet50/imagenet/pot_95_v2')
     
     # Final count of skipped channels
     print(f"\nCircuit analysis pipeline completed!")
-    print(f"Skipped {skipped} among {len(valid_channels)} channels.")
 
 if __name__ == '__main__':
     main() 

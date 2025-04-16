@@ -286,12 +286,18 @@ def create_graph_from_connections(connections, img_dir=None, option='cropped_ima
     # Add nodes and edges
     for source, targets in connections.items():
         layer_name, cid = source
-        layer_id = float(layer_name.replace('layer', ''))
+        if 'layer' in layer_name and 'block' in layer_name:
+            layer_id = float(layer_name.replace('layer', '').replace('_block', '.'))
+        else:
+            layer_id = float(layer_name.replace('layer', ''))
         G.add_node(source, layer=layer_id, cid=cid, text=f'Ch{cid}')
 
         for target_layer, target_node, weight in targets:
             target = (target_layer, target_node)
-            layer_id = float(target_layer.replace('layer', ''))
+            if 'layer' in layer_name and 'block' in layer_name:
+                layer_id = float(layer_name.replace('layer', '').replace('_block', '.'))
+            else:
+                layer_id = float(layer_name.replace('layer', ''))
 
             G.add_node(target, layer=layer_id, cid=target_node, text=f'Ch{target_node}')
             G.add_edge(source, target, weight=weight)
