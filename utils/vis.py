@@ -286,12 +286,18 @@ def create_graph_from_connections(connections, img_dir=None, option='cropped_ima
     # Add nodes and edges
     for source, targets in connections.items():
         layer_name, cid = source
-        layer_id = float(layer_name.replace('layer', ''))
+        if 'layer' in layer_name and 'block' in layer_name:
+            layer_id = float(layer_name.replace('layer', '').replace('_block', '.'))
+        else:
+            layer_id = float(layer_name.replace('layer', ''))
         G.add_node(source, layer=layer_id, cid=cid, text=f'Ch{cid}')
 
         for target_layer, target_node, weight in targets:
             target = (target_layer, target_node)
-            layer_id = float(target_layer.replace('layer', ''))
+            if 'layer' in layer_name and 'block' in layer_name:
+                layer_id = float(layer_name.replace('layer', '').replace('_block', '.'))
+            else:
+                layer_id = float(layer_name.replace('layer', ''))
 
             G.add_node(target, layer=layer_id, cid=target_node, text=f'Ch{target_node}')
             G.add_edge(source, target, weight=weight)
@@ -572,6 +578,30 @@ def longest_common_path_from_graph(G1, G2):
 
     return longest_path
 
+
+def build_circuit_graph_from_pickle(fname):
+    with open(fname, 'rb') as f:
+        connections = pickle.load(f)
+
+    circuit = nx.DiGraph()
+    for src_layer, src_channel, tgt_layer, filtered_channels, filtered_scores, filtered_info_scores, return_level, scale, shape in connections['circuit']:
+        for tgt_channel in filtered_channels:
+            circuit.add_edge((src_layer, src_channel), (tgt_layer, tgt_channel), weight=filtered_scores[0], info_weight=filtered_info_scores[0])
+    return circuit
+
+def build_circuit_graph_from_pickle_depreciated(fname):
+    LAYERS = [
+        'layer1_block0', 'layer1_block1', 'layer1_block2',
+        'layer2_block0', 'layer2_block1', 'layer2_block2', 'layer2_block3',
+        'layer3_block0', 'layer3_block1', 'layer3_block2', 'layer3_block3', 'layer3_block4', 'layer3_block5',
+        'layer4_block0', 'layer4_block1', 'layer4_block2'
+    ]
+    
+    with open(fname, 'rb') as f:
+        connections = pickle.load(f)
+    circuit = convert_matrices_to_connections(connections['matrices'], layer_names=LAYERS)
+    circuit = create_graph_from_connections(circuit)
+    return circuit    
 
 if __name__ == '__main__':
     img_dir_name = '/project/PURE/results/global_features/imagenet/resnet50_torchvision'
