@@ -37,10 +37,14 @@ def parse_args():
                        help='Number of images to display')
     parser.add_argument('--tgt_sample', type=int, required=True,
                        help='Specific sample index to analyze')
+    parser.add_argument('--dataset_path', type=str, default='/data/ImageNet1k/val',
+                       help='Dataset path')
     
     # Output options
     parser.add_argument('--save_plots', type=bool, default=True,
                        help='Save plots instead of displaying')
+    parser.add_argument('--save_dir', type=str, default='/data8/dahee/circuit/results/',
+                       help='Save directory')
     
     # Add POT threshold parameter
     parser.add_argument('--pot_threshold', type=float, default=95,
@@ -64,9 +68,9 @@ class CircuitAnalyzer:
         self.model_type = self.model_config['model_type']
         
         # Setup paths
-        self.samples_dir = f"/data8/dahee/circuit/results/{self.model_name}/{self.dataset}"
+        self.samples_dir = os.path.join(args.save_dir, self.model_name, self.dataset)
         if self.dataset == "imagenet":
-            self.val_dir = "/data/ImageNet1k/val"
+            self.val_dir = args.dataset_path
         self.save_dir = os.path.join(self.samples_dir, f"pot_{int(self.pot_threshold)}/{self.tgt_sample}")
         
         # Setup environment

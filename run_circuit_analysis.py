@@ -5,6 +5,7 @@ import subprocess
 import json
 from typing import List, Tuple, Set
 from model_configs import get_model_config
+from find_active_channels import load_activation_samples, find_active_channels
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Run Circuit Analysis Pipeline')
@@ -22,9 +23,33 @@ def parse_args():
                        help='Percentile threshold for Peak Over Threshold method')
     parser.add_argument('--save_plots', type=bool, default=True,
                        help='Save plots')
+    parser.add_argument('--dataset_path', type=str, default='/data/ImageNet1k/val',
+                       help='Dataset path')
     
     return parser.parse_args()
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Run Circuit Analysis Pipeline')
+    
+    # Required arguments
+    parser.add_argument('--gpu', type=str, default='1',
+                       help='GPU device number')
+    parser.add_argument('--dataset', type=str, default='imagenet',
+                       help='Dataset name')
+    parser.add_argument('--model', type=str, default='resnet50',
+                       help='Model name')
+    parser.add_argument('--tgt_sample', type=int, default=4202,
+                       help='Target sample index to analyze')
+    parser.add_argument('--pot_threshold', type=float, default=95,
+                       help='Percentile threshold for Peak Over Threshold method')
+    parser.add_argument('--save_plots', type=bool, default=True,
+                       help='Save plots')
+    parser.add_argument('--save_dir', type=str, default='/project/PURE/results_circuit_v0227_POT_80',
+                       help='Save directory')
+    parser.add_argument('--dataset_path', type=str, default='/project/data/external/ILSVRC/Data/CLS-LOC/val',
+                       help='Dataset path')
+    
+    return parser.parse_args()
 
 def run_find_active_channels(args) -> str:
     """Run find_active_channels.py and return path to output pickle file."""
@@ -74,7 +99,9 @@ def run_main_analysis(args, layer_name: str, channel_idx: int):
         '--src_channel', str(channel_idx),
         '--tgt_sample', str(args.tgt_sample),
         '--pot_threshold', str(args.pot_threshold),
-        '--save_plots', str(args.save_plots)
+        '--save_plots', str(args.save_plots),
+        '--save_dir', args.save_dir,
+        '--dataset_path', args.dataset_path,
     ]
     
     print(f"\nAnalyzing layer {layer_name}, channel {channel_idx}...")
@@ -96,11 +123,20 @@ def main():
     args = parse_args()
     model_config = get_model_config(args.model)
     
-    # Run pipeline with model-specific handling
-    pickle_path = run_find_active_channels(args)
-    with open(pickle_path, 'rb') as f:
-        active_channels = pickle.load(f)
+    # Run pipeline with model-specific handling, run_find_active_channels
+    samples_dir = os.path.join(args.save_dir, args.model, args.dataset)
+    save_dir = os.path.join(samples_dir, f"{args.tgt_sample}")
+    os.makedirs(save_dir, exist_ok=True)
     
+    highly_activated_samples = load_activation_samples(samples_dir)
+    active_channels = find_active_channels(highly_activated_samples, args.tgt_sample)
+    active_channels.sort(key=lambda x: x[0])
+    
+    save_path = os.path.join(save_dir, f'active_channels_sample_{args.tgt_sample}.pkl')
+    with open(save_path, 'wb') as f:
+        pickle.dump(active_channels, f)
+    
+    # Filter channels based on model architecture
     valid_channels = filter_valid_channels(active_channels, model_config['model_type'])
     
     metadata_path = get_metadata_path(args)
@@ -120,7 +156,6 @@ def main():
             
         run_main_analysis(args, layer_name, channel_idx)
     
-        
     # Final count of skipped channels
     print(f"\nCircuit analysis pipeline completed!")
     print(f"Skipped {skipped} among {len(valid_channels)} channels.")
