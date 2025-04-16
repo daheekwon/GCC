@@ -1,6 +1,3 @@
-__pycache__/
-*.py[cod]
-
 # Ignore compiled Python bytecode
 __pycache__/
 *.pyc
