@@ -242,8 +242,7 @@ def main():
 
         # 탐색 결과 있을 때만 저장
         if len(circuit) > 0:
-            # save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, save_dir)
-            save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, '/project/PURE/results_circuit_v0227_POT_80/resnet50/imagenet/pot_95_v2')
+            save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, save_dir)
     
     # Final count of skipped channels
     print(f"\nCircuit analysis pipeline completed!")
