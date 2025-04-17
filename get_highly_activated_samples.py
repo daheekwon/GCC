@@ -125,6 +125,8 @@ def main():
                       help='Class index')
     parser.add_argument('--n_samples', type=int, default=500,
                       help='Number of samples to consider')
+    parser.add_argument('--dataset_path', type=str, default='/data/ImageNet1k/val',
+                       help='Dataset path')
     args = parser.parse_args()
     
     # Get model configuration and create model
@@ -141,7 +143,7 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    val_dir = '/data/ImageNet1k/val'  # Update with your path
+    val_dir = args.dataset_path
     val_dataset = datasets.ImageFolder(val_dir, transform=transform)
     if args.class_idx is not None:
         subset_indices = (torch.tensor(val_dataset.targets) == args.class_idx).nonzero().squeeze().tolist()
