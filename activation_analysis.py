@@ -259,7 +259,7 @@ def analyze_channel_score(model: nn.Module,
 
     # Create masked and amplified versions
     masked_A = torch.zeros_like(input_A)
-    amplified_A = input_A * 2
+    # amplified_A = input_A * 2
 
     # Get outputs for different activation versions
     output_org_A = get_output_with_modified_activation(
@@ -282,30 +282,30 @@ def analyze_channel_score(model: nn.Module,
         channel_idx=src_channel
     )
     
-    output_amplified_A = get_output_with_modified_activation(
-        model=model,
-        model_type=model_type,
-        src_layer_block=src_layer_block,
-        tgt_layer_block=tgt_layer_block,
-        image=img,
-        original_act=amplified_A,
-        channel_idx=src_channel
-    )
+    # output_amplified_A = get_output_with_modified_activation(
+    #     model=model,
+    #     model_type=model_type,
+    #     src_layer_block=src_layer_block,
+    #     tgt_layer_block=tgt_layer_block,
+    #     image=img,
+    #     original_act=amplified_A,
+    #     channel_idx=src_channel
+    # )
 
     # Calculate differences
     
     if model_type == 'resnet':
         # For ResNet: average over spatial dimensions (height, width)
         diff_masked = (output_org_A[0] - output_masked_A[0]).mean(dim=(1,2))
-        diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=(1,2))
+        # diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=(1,2))
     else:
         # For ViT: average over sequence length dimension
         diff_masked = (output_org_A[0] - output_masked_A[0]).mean(dim=0)
-        diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=0)
+        # diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=0)
 
     # Filter negative values
     diff_masked = torch.where(diff_masked < 0, torch.zeros_like(diff_masked), diff_masked)
-    diff_amplified = torch.where(diff_amplified < 0, torch.zeros_like(diff_amplified), diff_amplified)
+    # diff_amplified = torch.where(diff_amplified < 0, torch.zeros_like(diff_amplified), diff_amplified)
 
     # Calculate final scores
     scores = diff_masked

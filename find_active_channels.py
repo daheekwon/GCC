@@ -73,9 +73,14 @@ def main():
         layer_num = int(x[0].split('_')[-1])
         return layer_num
     
-    # Sort using the custom key function
-    active_channels.sort(key=layer_sort_key)
-    
+    if args.model == 'resnet50':
+        print("----sorting in layers (resnet50)----")
+        active_channels.sort(key=lambda x: x[0])
+    elif args.model == 'vit':
+        # Sort using the custom key function
+        print("----sorting in layers----")
+        active_channels.sort(key=layer_sort_key)
+        print(active_channels)
     # Save results
     save_path = os.path.join(save_dir, f'active_channels_sample_{args.tgt_sample}.pkl')
     with open(save_path, 'wb') as f:
