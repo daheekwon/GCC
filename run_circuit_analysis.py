@@ -34,26 +34,6 @@ def parse_args():
     
     return parser.parse_args()
 
-def run_find_active_channels(args) -> str:
-    """Run find_active_channels.py and return path to output pickle file."""
-    cmd = [
-        'python', 'find_active_channels.py',
-        '--gpu', args.gpu,
-        '--dataset', args.dataset,
-        '--model', args.model,
-        '--tgt_sample', str(args.tgt_sample),
-        '--pot_threshold', str(args.pot_threshold)
-    ]
-    
-    print("Finding active channels...")
-    subprocess.run(cmd, check=True)
-    
-    # Construct path to output pickle file
-    samples_dir = f"/data8/dahee/circuit/results/{args.model}/{args.dataset}"
-    save_dir = os.path.join(samples_dir, f"pot_{int(args.pot_threshold)}/{args.tgt_sample}")
-    pickle_path = os.path.join(save_dir, f'active_channels_sample_{args.tgt_sample}.pkl')
-    
-    return pickle_path
 
 def get_metadata_path(args) -> str:
     """Get path to the metadata file."""
@@ -61,34 +41,6 @@ def get_metadata_path(args) -> str:
     save_dir = os.path.join(samples_dir, f"{args.tgt_sample}")
     os.makedirs(save_dir, exist_ok=True)
     return os.path.join(save_dir, 'metadata.json')
-
-def load_searched_channels(metadata_path: str) -> Set[Tuple[str, int]]:
-    """Load set of previously searched channels."""
-    if os.path.exists(metadata_path):
-        with open(metadata_path, 'r') as f:
-            # Convert list of lists from JSON back to set of tuples
-            channel_list = json.load(f)
-            return channel_list
-    return {}
-
-def run_main_analysis(args, layer_name: str, channel_idx: int):
-    """Run main.py with specified layer and channel."""
-    cmd = [
-        'python', 'main.py',
-        '--gpu', args.gpu,
-        '--dataset', args.dataset,
-        '--model', args.model,
-        '--src_layer_block', layer_name,
-        '--src_channel', str(channel_idx),
-        '--tgt_sample', str(args.tgt_sample),
-        '--pot_threshold', str(args.pot_threshold),
-        '--save_plots', str(args.save_plots),
-        '--save_dir', args.save_dir,
-        '--dataset_path', args.dataset_path,
-    ]
-    
-    print(f"\nAnalyzing layer {layer_name}, channel {channel_idx}...")
-    subprocess.run(cmd, check=True)
 
 def filter_valid_channels(active_channels: List[Tuple[str, int]], model_type: str) -> List[Tuple[str, int]]:
     """Filter channels based on model architecture."""
@@ -108,7 +60,6 @@ def main():
     
     # Run pipeline with model-specific handling, run_find_active_channels
     save_dir = os.path.join(args.save_dir, args.model, args.dataset)
-    os.makedirs(save_dir, exist_ok=True)
     
     highly_activated_samples = load_activation_samples(save_dir)
     active_channels = find_active_channels(highly_activated_samples, args.tgt_sample)
@@ -124,7 +75,9 @@ def main():
     elif args.model == 'vit':
         active_channels.sort(key=layer_sort_key)
 
-    save_path = os.path.join(save_dir, f'active_channels_sample_{args.tgt_sample}.pkl')
+    write_path = os.path.join(save_dir, f'pot_{int(args.pot_threshold)}', f'{args.tgt_sample}')
+    save_path = os.path.join(write_path, f'active_channels_sample_{args.tgt_sample}.pkl')
+    os.makedirs(write_path, exist_ok=True)
     with open(save_path, 'wb') as f:
         pickle.dump(active_channels, f)
     
@@ -135,7 +88,6 @@ def main():
     print(f"\nFound {len(active_channels)} active channels")
     print(f"After filtering the last layer: {len(valid_channels)} channels remain")
     print("================================================")
-    write_path = os.path.join(save_dir, f'pot_{int(args.pot_threshold)}', f'{args.tgt_sample}')
     print(f"Writing results to {write_path}")
     print("================================================")
     print()
