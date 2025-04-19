@@ -132,7 +132,7 @@ def main():
 
         # 현재 노드의 결과 저장
         results = [
-            (current_src_layer, current_src_channel, next_layer, filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale)
+            (current_src_layer, current_src_channel, next_layer, filtered_channels, filtered_scores, filtered_info_scores)
         ]
 
         # If not at the stopping layer, recursively explore child channels
@@ -196,6 +196,12 @@ def main():
         # 탐색 결과 있을 때만 저장
         if len(circuit) > 0:
             save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, save_dir)
+               # Save visited set as JSON
+            visited_list = [[layer, int(channel)] for layer, channel in visited]  # Convert int64 to native int
+            visited_save_path = os.path.join(save_dir, f'pot_{int(args.pot_threshold)}', f'{args.tgt_sample}', 'visited_channels.json')
+            with open(visited_save_path, 'w') as f:
+                json.dump(visited_list, f)
+
             # save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, f'/data8/dahee/circuit/results/resnet50/imagenet/{args.model}/')
     
     # Final count of skipped channels
