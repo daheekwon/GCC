@@ -68,7 +68,7 @@ class CircuitAnalyzer:
         self.model_type = self.model_config['model_type']
         
         # Setup paths
-        self.samples_dir = os.path.join(args.save_dir, self.model_name, self.dataset)
+        self.samples_dir = os.path.join(args.save_dir, self.model_name, self.dataset, 'mlp_exp')
         if self.dataset == "imagenet":
             self.val_dir = args.dataset_path
         self.save_dir = os.path.join(self.samples_dir, f"pot_{int(self.pot_threshold)}/{self.tgt_sample}")
@@ -110,13 +110,13 @@ class CircuitAnalyzer:
                 return block.conv3.out_channels if hasattr(block, 'conv3') else block.conv2.out_channels
             elif self.model_type == 'vit':  # ViT
                 # Parse layer name (e.g., 'encoder_layer_0')
-                layer_num = int(layer_name.split('_')[-1])
+                layer_num = int(layer_name.split('_')[2])
                 
                 # Get the correct encoder layer
                 layer = self.model.encoder.layers[layer_num]
                 
                 # Return hidden dimension (768 for ViT-B/16)
-                return layer.mlp[3].out_features
+                return layer.mlp[0].out_features
         
         # Find start index based on src_layer_block
         start_idx = layer_keys.index(self.src_layer_block)
@@ -488,8 +488,8 @@ def load_data(val_dir):
 
 def load_activation_samples(samples_dir):
     """Load pre-computed activation samples."""
-    avg_file = os.path.join(samples_dir, 'highly_activated_samples_top5000.pkl')
-    high_file = os.path.join(samples_dir, 'highly_activated_samples_top500.pkl')
+    avg_file = os.path.join(samples_dir, 'highly_activated_samples_top5000_mlp.pkl')
+    high_file = os.path.join(samples_dir, 'highly_activated_samples_top500_mlp.pkl')
     
     with open(avg_file, 'rb') as f:
         avg_activated_samples = pickle.load(f)
@@ -566,9 +566,9 @@ def load_or_create_metadata(save_dir, model=None, model_type='resnet'):
         # ViT layer structure - ensure numerical ordering
         num_layers = len(model.encoder.layers)
         # Create sorted layer keys
-        layer_keys = [f'encoder_layer_{i}' for i in range(num_layers)]
+        layer_keys = [f'encoder_layer_{i}_mlp' for i in range(num_layers)]
         # Sort numerically based on the layer number
-        layer_keys.sort(key=lambda x: int(x.split('_')[-1]))
+        layer_keys.sort(key=lambda x: int(x.split('_')[2]))
         
         for key in layer_keys:
             default_metadata[key] = {

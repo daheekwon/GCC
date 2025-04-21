@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple
 
 def load_activation_samples(samples_dir: str) -> Dict:
     """Load pre-computed highly activated samples."""
-    high_file = os.path.join(samples_dir, 'highly_activated_samples_top500.pkl')
+    high_file = os.path.join(samples_dir, 'highly_activated_samples_top500_mlp.pkl')
     
     with open(high_file, 'rb') as f:
         highly_activated_samples = pickle.load(f)

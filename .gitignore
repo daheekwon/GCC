@@ -1,4 +1,6 @@
 <<<<<<< HEAD
 # Ignore compiled Python bytecode
 __pycache__/
+utils/__pycache__/
 *.pyc
+

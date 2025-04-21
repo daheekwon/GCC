@@ -37,7 +37,7 @@ def parse_args():
 
 def get_metadata_path(args) -> str:
     """Get path to the metadata file."""
-    samples_dir = f"/data8/dahee/circuit/results/{args.model}/{args.dataset}/pot_{int(args.pot_threshold)}"
+    samples_dir = f"/data8/dahee/circuit/results/{args.model}/{args.dataset}/mlp_exp/pot_{int(args.pot_threshold)}"
     save_dir = os.path.join(samples_dir, f"{args.tgt_sample}")
     os.makedirs(save_dir, exist_ok=True)
     return os.path.join(save_dir, 'metadata.json')
@@ -50,7 +50,7 @@ def filter_valid_channels(active_channels: List[Tuple[str, int]], model_type: st
     elif model_type == 'vit':
 
         return [(layer, channel) for layer, channel in active_channels 
-                if not layer.endswith('_11')]
+                if not layer.endswith('_11_mlp')]
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -59,14 +59,14 @@ def main():
     model_config = get_model_config(args.model)
     
     # Run pipeline with model-specific handling, run_find_active_channels
-    save_dir = os.path.join(args.save_dir, args.model, args.dataset)
+    save_dir = os.path.join(args.save_dir, args.model, args.dataset, 'mlp_exp')
     
     highly_activated_samples = load_activation_samples(save_dir)
     active_channels = find_active_channels(highly_activated_samples, args.tgt_sample)
 
     def layer_sort_key(x):
         # Extract the layer number from the name (e.g., 'encoder_layer_2' -> 2)
-        layer_num = int(x[0].split('_')[-1])
+        layer_num = int(x[0].split('_')[2])
         return layer_num
     active_channels.sort(key=lambda x: x[0])
 
@@ -75,7 +75,7 @@ def main():
     elif args.model == 'vit':
         active_channels.sort(key=layer_sort_key)
 
-    write_path = os.path.join(save_dir, f'pot_{int(args.pot_threshold)}', f'{args.tgt_sample}')
+    write_path = os.path.join(save_dir,f'pot_{int(args.pot_threshold)}', f'{args.tgt_sample}')
     save_path = os.path.join(write_path, f'active_channels_sample_{args.tgt_sample}.pkl')
     os.makedirs(write_path, exist_ok=True)
     with open(save_path, 'wb') as f:
@@ -173,7 +173,7 @@ def main():
     if args.model == 'resnet50':
         layer_keys = sorted(analyzer.avg_activated_samples.keys())
     elif args.model == 'vit':
-        layer_keys = sorted(analyzer.avg_activated_samples.keys(), key=lambda x: int(x.split('_')[-1]))
+        layer_keys = sorted(analyzer.avg_activated_samples.keys(), key=lambda x: int(x.split('_')[2]))
     
     visited = set()
     computed_results = {}

@@ -40,9 +40,9 @@ class IntermediateLayerGetter(nn.Module):
         """Register hooks for ViT architecture."""
         
         for layer_idx, layer in enumerate(self.model.encoder.layers):
-            name = f'encoder_layer_{layer_idx}'
-            # Hook for the output of each transformer block
-            hook = layer.register_forward_hook(
+            name = f'encoder_layer_{layer_idx}_mlp'
+            # Hook for the output of MLP layer after GELU activation
+            hook = layer.mlp[1].register_forward_hook(
                 lambda m, inp, out, name=name: self.activations.update({name: out})
             )
             self.hooks.append(hook)
@@ -52,11 +52,10 @@ class IntermediateLayerGetter(nn.Module):
         with torch.no_grad():
             _ = self.model(x)
             if self.model_type == 'vit':
-                # Process ViT activations to match expected format
                 processed_activations = {}
                 # Sort keys numerically based on layer number
                 sorted_keys = sorted(self.activations.keys(), 
-                                   key=lambda x: int(x.split('_')[-1]))
+                                   key=lambda x: int(x.split('_')[2]))  # Changed index to 2 for new naming
                 
                 for name in sorted_keys:
                     activation = self.activations[name]
@@ -64,7 +63,7 @@ class IntermediateLayerGetter(nn.Module):
                     processed_activations[name] = activation.transpose(1, 2)
                 return processed_activations
             return self.activations
-    
+            
     def __del__(self):
         for hook in self.hooks:
             hook.remove()
@@ -76,9 +75,9 @@ def get_top_k_activations(feature_map, k=0.1, model_type='resnet'):
         k_pixels = int(H * W * k)
         feature_map_flat = feature_map.permute(0, 1, 2, 3).reshape(B, C, -1)
     else:  # ViT
-        B, N, C = feature_map.shape  # N is number of tokens
+        B, N, C = feature_map.shape
         k_pixels = int(C * k)
-        feature_map_flat = feature_map.permute(0, 2, 1)  # [B, C, N] C = 197
+        feature_map_flat = feature_map.permute(0, 2, 1)  # [B, C, N] C = 197 N: 3072
 
     # Use torch.kthvalue for memory efficiency
     top_k_vals = torch.sort(feature_map_flat, dim=1, descending=True)[0]
@@ -88,12 +87,12 @@ def get_top_k_activations(feature_map, k=0.1, model_type='resnet'):
 
 def save_checkpoint(results, args):
     """Save intermediate results to a checkpoint file."""
-    output_dir = os.path.join(args.output_dir, args.model_name, args.dataset_name)
+    output_dir = os.path.join(args.output_dir, args.model_name, args.dataset_name, 'mlp_exp')
     os.makedirs(output_dir, exist_ok=True)
     
     checkpoint_file = os.path.join(
         output_dir, 
-        f'highly_activated_samples_{"cls" + str(args.class_idx) + "_" if args.class_idx is not None else ""}top{args.n_samples}.pkl'
+        f'highly_activated_samples_{"cls" + str(args.class_idx) + "_" if args.class_idx is not None else ""}top{args.n_samples}_mlp.pkl'
     )
     print(f"Saving checkpoint to {checkpoint_file}")
     
