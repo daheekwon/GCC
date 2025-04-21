@@ -256,7 +256,7 @@ def analyze_channel_score(model: nn.Module,
         channel_idx=src_channel
     ).squeeze()
 
-
+    
     # Create masked and amplified versions
     masked_A = torch.zeros_like(input_A)
     # amplified_A = input_A * 2
