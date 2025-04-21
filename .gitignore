@@ -2,3 +2,4 @@
 # Ignore compiled Python bytecode
 __pycache__/
 *.pyc
+utils/__pycache__/
