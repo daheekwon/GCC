@@ -19,9 +19,11 @@
 # done
 
 DATASET_PATH="/project/data/external/ILSVRC/Data/CLS-LOC/val"
+GPU_ID=3
+export CUDA_VISIBLE_DEVICES=$GPU_ID
 python -m get_highly_activated_samples \
     --output_dir "/project/PURE/results_circuit_v0227_POT_80/vit/imagenet" \
     --model_name vit \
     --dataset_name imagenet \
     --dataset_path $DATASET_PATH \
-    --n_samples 5000
+    --n_samples 500
