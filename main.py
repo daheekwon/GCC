@@ -89,6 +89,9 @@ class CircuitAnalyzer:
         
         # Load or create metadata with model
         self.metadata = load_or_create_metadata(self.save_dir, self.model, self.model_type)
+        
+        # Load or create metadata with model
+        self.metadata = load_or_create_metadata(self.save_dir, self.model)
 
     def initialize_connection_matrices(self):
         """Initialize sparse matrices for connections between consecutive layers."""
@@ -117,6 +120,7 @@ class CircuitAnalyzer:
                 
                 # Return hidden dimension (768 for ViT-B/16)
                 return layer.mlp[3].out_features
+
         
         # Find start index based on src_layer_block
         start_idx = layer_keys.index(self.src_layer_block)
@@ -172,6 +176,7 @@ class CircuitAnalyzer:
             shape = np.max([shape, 0.00000000000000001])
             scale = np.min([scale, np.std(exceedances)])
 
+            shape, loc, scale = stats.genpareto.fit(exceedances)
             # Calculate return level
             p = 0.95
             N = len(scores_ls)

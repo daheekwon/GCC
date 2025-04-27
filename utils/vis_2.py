@@ -290,7 +290,6 @@ def create_graph_from_connections(connections, img_dir=None, option='cropped_ima
                 layer_id = float(layer_name.replace('layer', '').replace('_block', '.'))
             else:
                 layer_id = float(layer_name.replace('layer', ''))
-
             G.add_node(target, layer=layer_id, cid=target_node, text=f'Ch{target_node}')
             G.add_edge(source, target, weight=weight)
 

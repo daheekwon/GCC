@@ -1,11 +1,10 @@
-import os
 import pickle
 import math
 import torch
 import torch.nn.functional as F
 import torchvision
-# from datasets import get_dataset
-# from safetensors import safe_open
+
+
 from skimage.measure import regionprops
 from skimage.morphology import label
 from torchvision.transforms.functional import gaussian_blur
@@ -139,48 +138,48 @@ def draw_channel_images(img_list, mask_list, option, save_name, crop_th=0.8, mas
     plt.savefig(save_name)
     plt.show()
 
-# def main(dataset_path):
-#     dataset = get_dataset('imagenet')(
-#         data_path=dataset_path,
-#         split="test",
-#         preprocessing=False
-#     )
+def main(dataset_path):
+    dataset = get_dataset('imagenet')(
+        data_path=dataset_path,
+        split="test",
+        preprocessing=False
+    )
 
-#     data = pickle.load(open('/data8/dahee/circuit/results/resnet50/imagenet/highly_activated_samples_top500.pkl', 'rb'))
-#     top_indices = {}
-#     for k, v in data.items():
-#         layer_name = k.replace('_block', '.')
-#         top_indices[layer_name] = v
+    data = pickle.load(open('/data8/dahee/circuit/results/vit/imagenet/highly_activated_samples_top500.pkl', 'rb'))
+    top_indices = {}
+    for k, v in data.items():
+        layer_name = k.replace('_block', '.')
+        top_indices[layer_name] = v
 
-#     LAYERS = ["layer1.0", "layer1.1", "layer1.2", 
-#               "layer2.0", "layer2.1", "layer2.2", "layer2.3",
-#               "layer3.0", "layer3.1", "layer3.2", "layer3.3", "layer3.4", "layer3.5",
-#               "layer4.0", "layer4.1", "layer4.2"]
+    LAYERS = ["encoder_layer_0", "encoder_layer_1", "encoder_layer_2", 
+              "encoder_layer_3", "encoder_layer_4", "encoder_layer_5",
+              "encoder_layer_6", "encoder_layer_7", "encoder_layer_8", 
+              "encoder_layer_9", "encoder_layer_10", "encoder_layer_11"]
 
-#     for layer_name in tqdm(LAYERS, desc="Layers"):
-#         path = f"/data8/dahee/circuit/results/resnet50/imagenet/raw_latent_features_{layer_name}_test.safetensors"
-#         with safe_open(path, framework="pt", device="cpu") as f:
-#             representations = f.get_tensor("representations")
+    for layer_name in tqdm(LAYERS, desc="Layers"):
+        path = f"/project/PURE/results/global_features/imagenet/resnet50_torchvision/raw_latent_features_{layer_name}_test.safetensors"
+        with safe_open(path, framework="pt", device="cpu") as f:
+            representations = f.get_tensor("representations")
 
-#             num_channels = representations.shape[1]
-#             for cid in trange(num_channels):
-#                 sub_indices = top_indices[layer_name][cid][:4]
+            num_channels = representations.shape[1]
+            for cid in trange(num_channels):
+                sub_indices = top_indices[layer_name][cid][:4]
 
-#                 img_list = [dataset[i][0] for i in sub_indices]
-#                 mask_list = representations[sub_indices, cid, :, :]
+                img_list = [dataset[i][0] for i in sub_indices]
+                mask_list = representations[sub_indices, cid, :, :]
 
-#                 save_dir = '/data8/dahee/circuit/results/resnet50/imagenet'
+                save_dir = '/data8/dahee/circuit/results/vit/imagenet/'
 
-#                 try:
-#                     for option in ['original_image', 'mask', 'cropped_image']:
-#                         save_name = os.path.join(save_dir, layer_name, option, f'{cid:04d}.png')
-#                         os.makedirs(os.path.dirname(save_name), exist_ok=True)
-#                         draw_channel_images(img_list, mask_list, option, save_name)
-#                 except Exception as e:
-#                     print(f"Error in {layer_name} {cid}: {e}")
-#                     continue
+                try:
+                    for option in ['original_image', 'mask', 'cropped_image']:
+                        save_name = os.path.join(save_dir, layer_name, option, f'{cid:04d}.png')
+                        os.makedirs(os.path.dirname(save_name), exist_ok=True)
+                        draw_channel_images(img_list, mask_list, option, save_name)
+                except Exception as e:
+                    print(f"Error in {layer_name} {cid}: {e}")
+                    continue
 
-# # Call the main function with user-defined parameters
-# if __name__ == "__main__":
-#     dataset_path = "/data/ImageNet1k/imagenet_val.pkl"  # 사용자 입력
-#     main(dataset_path)
+# Call the main function with user-defined parameters
+if __name__ == "__main__":
+    dataset_path = "/data/data/imagenet/imagenet_val.pkl"  # 사용자 입력
+    main(dataset_path)
