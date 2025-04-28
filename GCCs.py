@@ -218,7 +218,7 @@ class CircuitAnalyzer:
             denom_ratios.append(ratio)
         
         # print(f"denom_ratios: {np.mean(denom_ratios), np.median(denom_ratios)}")
-        ratio_threshold = max(np.mean(denom_ratios), 0.05)  # Take maximum of mean and 0.1
+        ratio_threshold = max(np.mean(denom_ratios),0.05)  # Take maximum of mean and 0.1
         ratio_mask = np.array(ratios) > ratio_threshold
         return (filtered_channels[ratio_mask], 
                 filtered_scores[ratio_mask],

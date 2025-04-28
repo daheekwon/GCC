@@ -4,40 +4,43 @@ import pickle
 import subprocess
 import json
 from typing import List, Tuple, Set
-<<<<<<< HEAD
 from tqdm.auto import tqdm
 
 from model_configs import get_model_config
 from find_active_channels import load_activation_samples, find_active_channels
-from main import CircuitAnalyzer
-=======
->>>>>>> 5b429480d8876ab68cedddbe1e2e108992ce2e86
+from GCCs import CircuitAnalyzer
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Run Circuit Analysis Pipeline')
     
     # Required arguments
-    parser.add_argument('--gpu', type=str, default='0',
+    parser.add_argument('--gpu', type=str, default='1',
                        help='GPU device number')
     parser.add_argument('--dataset', type=str, default='imagenet',
                        help='Dataset name')
-<<<<<<< HEAD
-    parser.add_argument('--model', type=str, default='resnet50', # vit
-=======
     parser.add_argument('--model', type=str, default='resnet50',
->>>>>>> 5b429480d8876ab68cedddbe1e2e108992ce2e86
                        help='Model name')
-    parser.add_argument('--tgt_sample', type=int, required=True,
+    parser.add_argument('--tgt_sample', type=int, default=4202,
                        help='Target sample index to analyze')
     parser.add_argument('--pot_threshold', type=float, default=95,
                        help='Percentile threshold for Peak Over Threshold method')
     parser.add_argument('--save_plots', type=bool, default=True,
                        help='Save plots')
-<<<<<<< HEAD
+    parser.add_argument('--save_dir', type=str, default='/data8/dahee/circuit/results',
+                       help='Save directory')
     parser.add_argument('--dataset_path', type=str, default='/data/ImageNet1k/val',
                        help='Dataset path')
     
     return parser.parse_args()
+
+
+def get_metadata_path(args) -> str:
+    """Get path to the metadata file."""
+    samples_dir = f"/data8/dahee/circuit/results/{args.model}/{args.dataset}/pot_{int(args.pot_threshold)}"
+    save_dir = os.path.join(samples_dir, f"{args.tgt_sample}")
+    os.makedirs(save_dir, exist_ok=True)
+    return os.path.join(save_dir, 'metadata.json')
 
 def filter_valid_channels(active_channels: List[Tuple[str, int]], model_type: str) -> List[Tuple[str, int]]:
     """Filter channels based on model architecture."""
@@ -56,15 +59,25 @@ def main():
     model_config = get_model_config(args.model)
     
     # Run pipeline with model-specific handling, run_find_active_channels
-    samples_dir = os.path.join(args.save_dir, args.model, args.dataset)
-    save_dir = os.path.join(samples_dir, f"{args.tgt_sample}")
-    os.makedirs(save_dir, exist_ok=True)
+    save_dir = os.path.join(args.save_dir, args.model, args.dataset)
     
-    highly_activated_samples = load_activation_samples(samples_dir)
+    highly_activated_samples = load_activation_samples(save_dir)
     active_channels = find_active_channels(highly_activated_samples, args.tgt_sample)
+
+    def layer_sort_key(x):
+        # Extract the layer number from the name (e.g., 'encoder_layer_2' -> 2)
+        layer_num = int(x[0].split('_')[-1])
+        return layer_num
     active_channels.sort(key=lambda x: x[0])
-    
-    save_path = os.path.join(save_dir, f'active_channels_sample_{args.tgt_sample}.pkl')
+
+    if args.model == 'resnet50':
+        active_channels.sort(key=lambda x: x[0])
+    elif args.model == 'vit':
+        active_channels.sort(key=layer_sort_key)
+
+    write_path = os.path.join(save_dir, f'pot_{int(args.pot_threshold)}', f'{args.tgt_sample}')
+    save_path = os.path.join(write_path, f'active_channels_sample_{args.tgt_sample}.pkl')
+    os.makedirs(write_path, exist_ok=True)
     with open(save_path, 'wb') as f:
         pickle.dump(active_channels, f)
     
@@ -73,6 +86,10 @@ def main():
     
     print(f"\nFound {len(active_channels)} active channels")
     print(f"After filtering the last layer: {len(valid_channels)} channels remain")
+    print("================================================")
+    print(f"Writing results to {write_path}")
+    print("================================================")
+    print()
 
     # Search channels that have not been searched yet
     def run_main_analysis(current_src_layer, current_src_channel, analyzer, layer_keys, visited, computed_results):
@@ -87,7 +104,7 @@ def main():
 
         # Error handling
         if current_src_layer not in layer_keys:
-            raise ValueError(f"Layer {current_src_layer} not found in layer_keys")
+            raise ValueError(f"Layer {current_src_layer} is not found in layer_keys")
 
         layer_idx = layer_keys.index(current_src_layer)
 
@@ -108,13 +125,13 @@ def main():
 
         # 연결된 채널이 없는 경우 종료
         if len(filtered_channels) == 0:
-            print(f"No channels found for {current_src_layer} channel {current_src_channel}")
+            # print(f"No channels found for {current_src_layer} channel {current_src_channel}")
             computed_results[cache_key] = []
             return []
 
         # 현재 노드의 결과 저장
         results = [
-            (current_src_layer, current_src_channel, next_layer, filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale)
+            (current_src_layer, current_src_channel, next_layer, filtered_channels, filtered_scores, filtered_info_scores)
         ]
 
         # If not at the stopping layer, recursively explore child channels
@@ -128,6 +145,8 @@ def main():
 
 
     def save_circuit(circuit, root_layer_name, root_channel_idx, target_sample, save_dir):
+
+        save_dir = os.path.join(save_dir, f'pot_{int(args.pot_threshold)}', f'{args.tgt_sample}')
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(
             save_dir,
@@ -143,13 +162,17 @@ def main():
 
         with open(save_path, 'wb') as f:
             pickle.dump(save_data, f)
-        print(f"Saved connection matrices to {save_path}")
+        print(f"Saved {len(circuit)} circuits.")# {save_path}")
         
     # Add dummy argument for CircuitAnalyzer
     args.src_layer_block = None
     args.src_channel = None
     analyzer = CircuitAnalyzer(args)
-    layer_keys = sorted(analyzer.avg_activated_samples.keys())
+
+    if args.model == 'resnet50':
+        layer_keys = sorted(analyzer.avg_activated_samples.keys())
+    elif args.model == 'vit':
+        layer_keys = sorted(analyzer.avg_activated_samples.keys(), key=lambda x: int(x.split('_')[-1]))
     
     visited = set()
     computed_results = {}
@@ -157,10 +180,11 @@ def main():
     # 루트 노드 기준으로 탐색 시작
     for root_layer_name, root_channel_idx in tqdm(valid_channels, desc="Analyzing channels", total=len(valid_channels)):
         root_key = (root_layer_name, root_channel_idx)
-
         if root_key in visited:
             print(f"Root node {root_layer_name} channel {root_channel_idx} already searched — skipping.")
             continue
+        else:
+            print(f"Searching from {root_layer_name} ({root_channel_idx} Channel)")
 
         circuit = run_main_analysis(
             root_layer_name, root_channel_idx,
@@ -171,10 +195,16 @@ def main():
         # 탐색 결과 있을 때만 저장
         if len(circuit) > 0:
             save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, save_dir)
+               # Save visited set as JSON
+            visited_list = [[layer, int(channel)] for layer, channel in visited]  # Convert int64 to native int
+            visited_save_path = os.path.join(save_dir, f'pot_{int(args.pot_threshold)}', f'{args.tgt_sample}', 'visited_channels.json')
+            with open(visited_save_path, 'w') as f:
+                json.dump(visited_list, f)
+
+            # save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, f'/data8/dahee/circuit/results/resnet50/imagenet/{args.model}/')
     
     # Final count of skipped channels
     print(f"\nCircuit analysis pipeline completed!")
-=======
     
     return parser.parse_args()
 
@@ -275,7 +305,6 @@ def main():
     # Final count of skipped channels
     print(f"\nCircuit analysis pipeline completed!")
     print(f"Skipped {skipped} among {len(valid_channels)} channels.")
->>>>>>> 5b429480d8876ab68cedddbe1e2e108992ce2e86
 
 if __name__ == '__main__':
     main() 

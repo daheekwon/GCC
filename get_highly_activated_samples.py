@@ -38,16 +38,11 @@ class IntermediateLayerGetter(nn.Module):
     
     def _register_vit_hooks(self):
         """Register hooks for ViT architecture."""
-        # Sort layers numerically
-        sorted_layers = sorted(
-            enumerate(self.model.encoder.layers),
-            key=lambda x: x[0]
-        )
         
-        for layer_idx, block in sorted_layers:
+        for layer_idx, layer in enumerate(self.model.encoder.layers):
             name = f'encoder_layer_{layer_idx}'
             # Hook for the output of each transformer block
-            hook = block.register_forward_hook(
+            hook = layer.register_forward_hook(
                 lambda m, inp, out, name=name: self.activations.update({name: out})
             )
             self.hooks.append(hook)

@@ -11,10 +11,7 @@ from PIL import Image
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from tqdm.auto import tqdm
 
-LAYERS = ["layer1.0", "layer1.1", "layer1.2", 
-          "layer2.0", "layer2.1", "layer2.2", "layer2.3",
-          "layer3.0", "layer3.1", "layer3.2", "layer3.3", "layer3.4", "layer3.5",
-          "layer4.0", "layer4.1", "layer4.2"]
+LAYERS = [f"encoder_layer_{i}" for i in range(12)]  # Typical ViT has 12 layers
 
 def create_graph_from_paths(paths):
     G = nx.DiGraph()
@@ -65,10 +62,10 @@ def convert_matrices_to_connections(matrices, layer_names=LAYERS):
     return connections
 
 
-def visualize_from_pkl(pkl_path, img_dir, img_size=300, is_save=True, width=None, height=None, option='cropped_image'):
+def visualize_from_pkl(pkl_path, img_dir, img_size=300, is_save=True, width=None, height=None, option='cropped_image', pos=None):
     with open(pkl_path, 'rb') as f:
         results = pickle.load(f)
-    start_layer = results['src_layer_block'].replace('_block', '.') # layer3_block1
+    start_layer = results['src_layer']  # Assuming this is now in format "encoder_layer_X"
     loc = LAYERS.index(start_layer)
     layer_names = LAYERS[loc:loc+len(results['matrices'])+1]
     
@@ -83,7 +80,8 @@ def visualize_from_pkl(pkl_path, img_dir, img_size=300, is_save=True, width=None
             return
         
         G = create_graph_from_connections(connections, img_dir, img_size=img_size, option=option)
-        pos = compute_positions(G)
+        if pos is None:
+            pos = compute_positions(G)
         
         max_connections_length = len(max(connections.values(), key=len))
         num_layers = len(set([key[0] for key in connections.keys()])) + 1
@@ -149,59 +147,27 @@ def visualize_from_pkl(pkl_path, img_dir, img_size=300, is_save=True, width=None
         print(connections)
         raise e
 
+# Constants for ViT-B/16
 FEATURE_DIMS = {
-    'layer1.0': 256,
-    'layer1.1': 256,
-    'layer1.2': 256,
-
-    'layer2.0': 512,
-    'layer2.1': 512,
-    'layer2.2': 512,
-    'layer2.3': 512,
-
-    'layer3.0': 1024,
-    'layer3.1': 1024,
-    'layer3.2': 1024,
-    'layer3.3': 1024,
-    'layer3.4': 1024,
-    'layer3.5': 1024,
-
-    'layer4.0': 2048,
-    'layer4.1': 2048,
-    'layer4.2': 2048,
+    f'encoder_layer_{i}': 768  # ViT-B/16 has fixed hidden dimension of 768 across all layers
+    for i in range(12)  # 12 transformer layers
 }
 
 LAYER_POS = {
-    'layer1.0': 0,
-    'layer1.1': 1,
-    'layer1.2': 2,
-    
-    'layer2.0': 3,
-    'layer2.1': 4,
-    'layer2.2': 5,
-    'layer2.3': 6,
-
-    'layer3.0': 7,
-    'layer3.1': 8,
-    'layer3.2': 9,
-    'layer3.3': 10,
-    'layer3.4': 11,
-    'layer3.5': 12,
-
-    'layer4.0': 13,
-    'layer4.1': 14,
-    'layer4.2': 15,
+    f'encoder_layer_{i}': i  # Simple sequential positioning
+    for i in range(12)  # 12 transformer layers
 }
 
 def compute_absolute_positions(G):
+    """Modified to work with ViT layer structure"""
     pos = {}
     for node in G.nodes():
-        layer_name = f'layer{G.nodes[node]["layer"]}'
+        layer_idx = G.nodes[node]['layer']
         cid = G.nodes[node]['cid']
-
-        num_channels = FEATURE_DIMS[layer_name]
-        x = LAYER_POS[layer_name]
-        y = cid
+        
+        # Simple positioning - can be customized based on ViT architecture
+        x = float(layer_idx) * 3  # Horizontal spacing
+        y = float(cid)            # Vertical position based on channel/token ID
         pos[node] = (x, y)
     return pos
 
@@ -222,24 +188,32 @@ def compute_positions(G):
     for node in G.nodes():
         layer_idx = G.nodes[node]['layer']
         if isinstance(layer_idx, str):
+            if 'encoder_layer_' in layer_idx:
+                layer_idx = float(layer_idx.replace('encoder_layer_', ''))
+            elif 'layer' in layer_idx:  # Fallback for any other layer format
+                layer_idx = float(layer_idx.replace('layer', ''))
             layer_idx = float(layer_idx)
         if layer_idx not in layer_nodes:
             layer_nodes[layer_idx] = []
         layer_nodes[layer_idx].append(node)
     
+    layers = sorted(layer_nodes.keys())
     # Compute positions
-    for i, (layer_idx, nodes) in enumerate(layer_nodes.items()):
-        n_nodes = len(nodes)
-        for node_idx, node_name in enumerate(nodes):
-            # pos[node_name] = (i * 1, node_idx - n_nodes / 2)  # Arrange nodes vertically
-            pos[node_name] = (layer_idx * 3, node_idx - n_nodes/2)  # Arrange nodes vertically
+    for i, layer_idx in enumerate(layers):
+        n_nodes = len(layer_nodes[layer_idx])
+        for node_idx, node_name in enumerate(layer_nodes[layer_idx]):
+            layer_idx_int = layers.index(layer_idx)
+            pos[node_name] = (layer_idx_int * 3, node_idx - n_nodes/2)  # Arrange nodes vertically
     
     return pos
 
 def load_image(img_path, img_size=300):
     if os.path.exists(img_path):
         img = Image.open(img_path)
-        img = img.resize((img_size, img_size))
+        if isinstance(img_size, tuple):
+            img = img.resize((img_size[0], img_size[1]))
+        else:
+            img = img.resize((img_size, img_size))
     else:
         print(f"Does not exist: {img_path}")
         img = np.zeros((img_size, img_size, 3))
@@ -254,7 +228,7 @@ def visualize_path(path, option='cropped_image', img_size=300):
         layer_name = node[0]
         cid = node[1]
         
-        img_dir = '/data8/dahee/circuit/results/img_masked_cropped'
+        img_dir = '/data8/dahee/circuit/results/global_features/imagenet/vit'
     
         img = load_image(os.path.join(img_dir, layer_name, option, f'{cid:04d}.png'), img_size)
         axes[i].set_title(f'{layer_name} Ch{cid}')
@@ -266,37 +240,33 @@ def visualize_path(path, option='cropped_image', img_size=300):
     plt.show()
 
 def create_graph_from_connections(connections, img_dir=None, option='cropped_image', img_size=300):
-    """
-    Create a graph from a dictionary of connections.
-    connections = {('layer1.0', 17): [('layer1.1', 17, 0.938), ('layer1.1', 95, 0.236)],
-                   ('layer1.1', 17): [('layer1.2', 17, 0.868)], 
-                   ('layer1.2', 17): [('layer2.0', 202, 0.17), ('layer2.0', 352, 0.134)]}
-    """
-    # Create the graph
+    """Modified to handle ViT layer naming"""
     G = nx.DiGraph()
 
-    # Add nodes and edges
     for source, targets in connections.items():
         layer_name, cid = source
-        if 'layer' in layer_name and 'block' in layer_name:
-            layer_id = float(layer_name.replace('layer', '').replace('_block', '.'))
+        # Handle ViT layer naming convention
+        if isinstance(layer_name, str) and 'encoder_layer_' in layer_name:
+            layer_id = float(layer_name.replace('encoder_layer_', ''))
         else:
-            layer_id = float(layer_name.replace('layer', ''))
-        G.add_node(source, layer=layer_id, cid=cid, text=f'Ch{cid}')
+            layer_id = float(layer_name)
+            
+        G.add_node(source, layer=layer_id, cid=cid, text=f'Token{cid}')
 
         for target_layer, target_node, weight in targets:
             target = (target_layer, target_node)
-            if 'layer' in layer_name and 'block' in layer_name:
-                layer_id = float(layer_name.replace('layer', '').replace('_block', '.'))
+            if isinstance(target_layer, str) and 'encoder_layer_' in target_layer:
+                layer_id = float(target_layer.replace('encoder_layer_', ''))
             else:
                 layer_id = float(layer_name.replace('layer', ''))
-            G.add_node(target, layer=layer_id, cid=target_node, text=f'Ch{target_node}')
+            G.add_node(target, layer=layer_id, cid=target_node, text=f'Token{target_node}')
             G.add_edge(source, target, weight=weight)
 
     # Add image attributes to nodes
     if img_dir is not None:
         for node in G.nodes():
-            img_path = os.path.join(img_dir, G.nodes[node]['layer'], option, f"{G.nodes[node]['cid']:04d}.png")
+            layer_name = f"encoder_layer_{int(G.nodes[node]['layer'])}"
+            img_path = os.path.join(img_dir, layer_name, option, f"{G.nodes[node]['cid']:04d}.png")
             img = load_image(img_path, img_size)
             G.nodes[node]['image'] = img
 
@@ -357,7 +327,8 @@ def create_connection_graph(matrices, threshold=0.1):
 def visualize_connection_graph(G, pos, start_layer, weight_scale=5.0, min_width=0.3,
                                display_image=False, img_dir=None, img_size=300,
                                layer_names=LAYERS,
-                               figsize=(15, 10), option='original_image'):
+                               figsize=(15, 10), option='original_image',
+                               show_channel_number=True):
     """
     Visualize the connection graph with visible arrows
     """
@@ -388,7 +359,7 @@ def visualize_connection_graph(G, pos, start_layer, weight_scale=5.0, min_width=
     if edge_list:
         nx.draw_networkx_edges(G, pos, 
                              edgelist=edge_list, 
-                             edge_vis.pycolor='blue',
+                             edge_color='blue',
                              width=scaled_weights, 
                              alpha=0.7,
                              arrows=True,  # Enable arrows
@@ -434,15 +405,17 @@ def visualize_connection_graph(G, pos, start_layer, weight_scale=5.0, min_width=
                 cid = G.nodes[node]['cid']
                 # print(node, layer_name, cid)
     
+            # img = load_image(os.path.join(img_dir, layer_name, option, f'{layer_name}_{cid:04d}_cropped_image.png'), img_size)
             img = load_image(os.path.join(img_dir, layer_name, option, f'{cid:04d}.png'), img_size)
             img = OffsetImage(img, zoom=0.2)  # Adjust zoom as needed
             ab = AnnotationBbox(img, pos[node], frameon=False)
             ax.add_artist(ab)
 
             # Add text to nodes (channel number)
-            text = ax.text(pos[node][0], pos[node][1], G.nodes[node]['cid'], ha='center', va='center', fontsize=8, color='black')
-            bbox_props = dict(boxstyle="round,pad=0.3", edgecolor='none', facecolor='white', alpha=0.7)
-            text.set_bbox(bbox_props)
+            if show_channel_number:
+                text = ax.text(pos[node][0], pos[node][1], G.nodes[node]['cid'], ha='center', va='center', fontsize=8, color='black')
+                bbox_props = dict(boxstyle="round,pad=0.3", edgecolor='none', facecolor='white', alpha=0.7)
+                text.set_bbox(bbox_props)
 
 
     # ch_idx = pkl_path.split('_')[-1].split('.')[0]
@@ -567,12 +540,30 @@ def longest_common_path_from_graph(G1, G2):
     return longest_path
 
 
-if __name__ == '__main__':
-    img_dir_name = '/project/PURE/results/global_features/imagenet/resnet50_torchvision'
+def build_circuit_graph_from_pickle(fname):
+    with open(fname, 'rb') as f:
+        connections = pickle.load(f)
+
+    circuit = nx.DiGraph()
+    for src_layer, src_channel, tgt_layer, filtered_channels, filtered_scores, filtered_info_scores, return_level, scale, shape in connections['circuit']:
+        for tgt_channel in filtered_channels:
+            circuit.add_edge((src_layer, src_channel), (tgt_layer, tgt_channel), weight=filtered_scores[0], info_weight=filtered_info_scores[0])
+    return circuit
+
+def build_circuit_graph_from_pickle_depreciated(fname):
+    LAYERS = [f'encoder_layer_{i}' for i in range(12)]  # 12 transformer layers for ViT-B/16
     
-    pkl_dir_name = '/project/PURE/results_circuit/resnet50/imagenet'
+    with open(fname, 'rb') as f:
+        connections = pickle.load(f)
+    circuit = convert_matrices_to_connections(connections['matrices'], layer_names=LAYERS)
+    circuit = create_graph_from_connections(circuit)
+    return circuit    
+
+if __name__ == '__main__':
+    img_dir_name = '/data8/dahee/circuit/results/global_features/imagenet/vit_base_patch16_224'  # Updated path for ViT
+    pkl_dir_name = '/data8/dahee/circuit/results/vit/imagenet'  # Updated path for ViT
+    
     pkl_paths = glob.glob(os.path.join(pkl_dir_name, '**', 'connection_matrices_from_*.pkl'), recursive=True)
     pkl_paths = sorted(pkl_paths)
     for pkl_path in tqdm(pkl_paths):
-        # print(pkl_path)
         visualize_from_pkl(pkl_path, img_dir_name, img_size=300, is_save=True)
