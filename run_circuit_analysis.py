@@ -66,7 +66,7 @@ def main():
 
     def layer_sort_key(x):
         # Extract the layer number from the name (e.g., 'encoder_layer_2' -> 2)
-        layer_num = int(x[0].split('_')[-1])
+        layer_num = int(x[0].split('_')[2])
         return layer_num
     active_channels.sort(key=lambda x: x[0])
 
@@ -173,7 +173,7 @@ def main():
     if args.model == 'resnet50':
         layer_keys = sorted(analyzer.avg_activated_samples.keys())
     elif args.model == 'vit':
-        layer_keys = sorted(analyzer.avg_activated_samples.keys(), key=lambda x: int(x.split('_')[-1]))
+        layer_keys = sorted(analyzer.avg_activated_samples.keys(), key=lambda x: int(x.split('_')[2]))
     
     visited = set()
     computed_results = {}

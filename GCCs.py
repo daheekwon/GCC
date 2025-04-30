@@ -116,7 +116,7 @@ class CircuitAnalyzer:
                 layer = self.model.encoder.layers[layer_num]
                 
                 # Return hidden dimension (768 for ViT-B/16)
-                return layer.mlp[3].out_features
+                return layer.mlp[0].out_features
         
         # Find start index based on src_layer_block
         start_idx = layer_keys.index(self.src_layer_block)
@@ -213,7 +213,7 @@ class CircuitAnalyzer:
             denom_ratios.append(ratio)
         
         # print(f"denom_ratios: {np.mean(denom_ratios), np.median(denom_ratios)}")
-        ratio_threshold = max(np.mean(denom_ratios),0.05)  # Take maximum of mean and 0.1
+        ratio_threshold = max(np.mean(denom_ratios),0.1)  # Take maximum of mean and 0.1
         ratio_mask = np.array(ratios) > ratio_threshold
         return (filtered_channels[ratio_mask], 
                 filtered_scores[ratio_mask],
@@ -568,7 +568,7 @@ def load_or_create_metadata(save_dir, model=None, model_type='resnet'):
         # Create sorted layer keys
         layer_keys = [f'encoder_layer_{i}' for i in range(num_layers)]
         # Sort numerically based on the layer number
-        layer_keys.sort(key=lambda x: int(x.split('_')[-1]))
+        layer_keys.sort(key=lambda x: int(x.split('_')[2]))
         
         for key in layer_keys:
             default_metadata[key] = {

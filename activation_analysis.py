@@ -57,7 +57,7 @@ class LayerActivationHelper:
             
         try:
             # Access the transformer encoder layers
-            return self.model.encoder.layers[layer_idx]
+            return self.model.encoder.layers[layer_idx].mlp[1]
         except (IndexError, AttributeError):
             raise ValueError(f"Invalid ViT layer index: {layer_idx}")
 
@@ -70,7 +70,7 @@ def parse_layer_block(layer_name: str) -> Tuple[str, int]:
         return parts[0], int(parts[1][5:])
     elif layer_name.startswith('encoder_layer'):  # ViT format
         try:
-            layer_num = int(layer_name.split('_')[-1])
+            layer_num = int(layer_name.split('_')[2])
             return 'encoder_layer', layer_num
         except (IndexError, ValueError):
             raise ValueError(f"Invalid ViT layer format: {layer_name}")

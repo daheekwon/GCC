@@ -42,7 +42,7 @@ class IntermediateLayerGetter(nn.Module):
         for layer_idx, layer in enumerate(self.model.encoder.layers):
             name = f'encoder_layer_{layer_idx}'
             # Hook for the output of each transformer block
-            hook = layer.register_forward_hook(
+            hook = layer.mlp[1].register_forward_hook(
                 lambda m, inp, out, name=name: self.activations.update({name: out})
             )
             self.hooks.append(hook)
@@ -56,7 +56,7 @@ class IntermediateLayerGetter(nn.Module):
                 processed_activations = {}
                 # Sort keys numerically based on layer number
                 sorted_keys = sorted(self.activations.keys(), 
-                                   key=lambda x: int(x.split('_')[-1]))
+                                   key=lambda x: int(x.split('_')[2]))
                 
                 for name in sorted_keys:
                     activation = self.activations[name]
