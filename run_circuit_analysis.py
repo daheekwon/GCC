@@ -15,7 +15,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Run Circuit Analysis Pipeline')
     
     # Required arguments
-    parser.add_argument('--gpu', type=str, default='1',
+    parser.add_argument('--gpu', type=str, default='6',
                        help='GPU device number')
     parser.add_argument('--dataset', type=str, default='imagenet',
                        help='Dataset name')
@@ -23,7 +23,7 @@ def parse_args():
                        help='Model name')
     parser.add_argument('--tgt_sample', type=int, default=4202,
                        help='Target sample index to analyze')
-    parser.add_argument('--pot_threshold', type=float, default=95,
+    parser.add_argument('--pot_threshold', type=float, default=80,
                        help='Percentile threshold for Peak Over Threshold method')
     parser.add_argument('--save_plots', type=bool, default=True,
                        help='Save plots')
@@ -31,6 +31,10 @@ def parse_args():
                        help='Save directory')
     parser.add_argument('--dataset_path', type=str, default='/data/ImageNet1k/val',
                        help='Dataset path')
+    parser.add_argument('--corrupted_data', type=str, default='/data5/users/dahee/Concepts/corrupted_imagenet/corrupted_val_dataset.pt',
+                       help='Corrupted data path')
+    parser.add_argument('--patching_type', type=str, default='zero',
+                       help='Patching type')
     
     return parser.parse_args()
 
@@ -47,8 +51,8 @@ def filter_valid_channels(active_channels: List[Tuple[str, int]], model_type: st
     if model_type == 'resnet':
         return [(layer, channel) for layer, channel in active_channels 
                 if layer != 'layer4_block2']
-    elif model_type == 'vit':
-
+                
+    elif model_type == 'vit' or model_type == 'swin_t' or model_type == 'clip_vit':
         return [(layer, channel) for layer, channel in active_channels 
                 if not layer.endswith('_11')]
     else:
@@ -66,13 +70,23 @@ def main():
 
     def layer_sort_key(x):
         # Extract the layer number from the name (e.g., 'encoder_layer_2' -> 2)
-        layer_num = int(x[0].split('_')[2])
+        if args.model == 'vit':
+            layer_num = int(x[0].split('_')[2])
+        elif args.model == 'swin_t':
+            layer_num = int(x[0].split('_')[3])
+        elif args.model == 'clip_vit':
+            layer_num = int(x[0].split('_')[2])
         return layer_num
+
     active_channels.sort(key=lambda x: x[0])
 
     if args.model == 'resnet50':
         active_channels.sort(key=lambda x: x[0])
     elif args.model == 'vit':
+        active_channels.sort(key=layer_sort_key)
+    elif args.model == 'swin_t':
+        active_channels.sort(key=layer_sort_key)
+    elif args.model == 'clip_vit':
         active_channels.sort(key=layer_sort_key)
 
     write_path = os.path.join(save_dir, f'pot_{int(args.pot_threshold)}', f'{args.tgt_sample}')
@@ -136,14 +150,13 @@ def main():
         ]
 
         # If not at the stopping layer, recursively explore child channels
-        if next_layer not in {'layer4_block2', 'layers_11'}:
+        if next_layer not in {'layer4_block2', 'layers_11', 'block_11'}:
             for ch in filtered_channels:
                 child_results = run_main_analysis(next_layer, ch, analyzer, layer_keys, visited, computed_results)
                 results.extend(child_results)
 
         computed_results[cache_key] = results
         return results
-
 
     def save_circuit(circuit, root_layer_name, root_channel_idx, target_sample, save_dir):
 
@@ -173,6 +186,10 @@ def main():
     if args.model == 'resnet50':
         layer_keys = sorted(analyzer.avg_activated_samples.keys())
     elif args.model == 'vit':
+        layer_keys = sorted(analyzer.avg_activated_samples.keys(), key=lambda x: int(x.split('_')[2]))
+    elif args.model == 'swin_t':
+        layer_keys = sorted(analyzer.avg_activated_samples.keys(), key=lambda x: int(x.split('_')[3]))
+    elif args.model == 'clip_vit':
         layer_keys = sorted(analyzer.avg_activated_samples.keys(), key=lambda x: int(x.split('_')[2]))
     
     visited = set()

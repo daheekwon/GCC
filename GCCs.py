@@ -81,6 +81,13 @@ class CircuitAnalyzer:
         self.model = create_model(self.model_name).cuda()
         self.model.eval()
         
+        self.patching_type = args.patching_type
+        if self.patching_type == 'corrupted':
+            self.corrupted_dataset = torch.load(args.corrupted_data)
+            print(f"Corrupted dataset loaded from {args.corrupted_data}: {self.corrupted_dataset.shape}")
+        else:
+            self.corrupted_dataset = None
+
         # Load activation samples
         self.avg_activated_samples, self.highly_activated_samples = load_activation_samples(self.samples_dir)
         
@@ -143,7 +150,7 @@ class CircuitAnalyzer:
         if sum(normalized_scores) == 0:
             print('!!!!!!!!!!!!!!!!!!')
             print(f"Warning: No meaningful scores for {self.tgt_layer_block}")
-            return np.array([]), np.array([]), np.array([]), np.array([])
+            return np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
         normalized_scores /= normalized_scores.sum()
         
         # Create linked channels mask instead of list
@@ -228,6 +235,10 @@ class CircuitAnalyzer:
             return self._analyze_resnet_channel_impacts()
         elif self.model_type == 'vit':
             return self._analyze_vit_channel_impacts()
+        elif self.model_type == 'swin_t':
+            return self._analyze_swin_t_channel_impacts()
+        elif self.model_type == 'clip_vit':
+            return self._analyze_clip_vit_channel_impacts()
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
@@ -251,7 +262,9 @@ class CircuitAnalyzer:
             val_dataset=self.val_dataset,
             channel_idx=channel_indices,
             src_channel=self.src_channel,
-            model_type=self.model_type
+            model_type=self.model_type,
+            patching_type=self.patching_type,
+            corrupted_dataset=self.corrupted_dataset
         )
         
         # Filter channels and get significant ones
@@ -280,13 +293,77 @@ class CircuitAnalyzer:
             val_dataset=self.val_dataset,
             channel_idx=channel_indices,
             src_channel=self.src_channel,
-            model_type=self.model_type
+            model_type=self.model_type,
+            patching_type=self.patching_type,
+            corrupted_dataset=self.corrupted_dataset
         )
         
         # Filter channels and get significant ones
         filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.filter_channels(scores)
         
         return filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale
+
+    def _analyze_clip_vit_channel_impacts(self):
+        """Analyze channel impacts for ViT models."""
+        # Get channel indices for the target sample
+        channel_indices = get_channel_indices(
+            self.highly_activated_samples,
+            self.src_layer_block,
+            self.tgt_sample 
+        )
+        
+        if len(channel_indices) == 0:
+            print(f"Warning: No channels found for target sample {self.tgt_sample} in {self.src_layer_block}")
+            return [], [], [], [], [], []
+        
+        # Calculate impact scores
+        scores = analyze_channel_score(
+            model=self.model,
+            src_layer_block=self.src_layer_block,
+            tgt_layer_block=self.tgt_layer_block,
+            val_dataset=self.val_dataset,
+            channel_idx=channel_indices,
+            src_channel=self.src_channel,
+            model_type=self.model_type,
+            patching_type=self.patching_type,
+            corrupted_dataset=self.corrupted_dataset
+        )
+        
+        # Filter channels and get significant ones
+        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.filter_channels(scores)
+        
+        return filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale
+
+    def _analyze_swin_t_channel_impacts(self):
+        """Analyze channel impacts for Swin-T models."""
+        # Get channel indices for the target sample
+        channel_indices = get_channel_indices(
+            self.highly_activated_samples,
+            self.src_layer_block,
+            self.tgt_sample
+        )
+
+        if len(channel_indices) == 0:
+            print(f"Warning: No channels found for target sample {self.tgt_sample} in {self.src_layer_block}")
+            return [], [], [], [], [], []
+        # Calculate impact scores
+        scores = analyze_channel_score(
+            model=self.model,
+            src_layer_block=self.src_layer_block,
+            tgt_layer_block=self.tgt_layer_block,
+            val_dataset=self.val_dataset,
+            channel_idx=channel_indices,
+            src_channel=self.src_channel,
+            model_type=self.model_type,
+            patching_type=self.patching_type,
+            corrupted_dataset=self.corrupted_dataset
+        )
+        
+        # Filter channels and get significant ones
+        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.filter_channels(scores)
+        
+        return filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale
+        
 
     def visualize_activations(self):
         """Visualize channel activations and their feature maps."""
@@ -574,6 +651,15 @@ def load_or_create_metadata(save_dir, model=None, model_type='resnet'):
             default_metadata[key] = {
                 'searched_channels': [],
             }
+    elif model_type == 'swin_t':   
+        block_idx = 0
+        for stage in model.features:
+            if isinstance(stage, nn.Sequential):
+                for block in stage:
+                    if isinstance(block, nn.Module) and block.__class__.__name__ == 'SwinTransformerBlock':
+                        key = f'swin_t_block_{block_idx}'
+                        default_metadata[key] = {'searched_channels': []}
+                        block_idx += 1
     
     return default_metadata
 

@@ -1,4 +1,5 @@
 import os
+import random
 import torchvision
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Dataset, Subset
@@ -26,6 +27,10 @@ class LayerActivationHelper:
             return self._get_resnet_layer(layer_name)
         elif self.model_type == 'vit':
             return self._get_vit_layer(layer_name)
+        elif self.model_type == 'swin_t':
+            return self._get_swin_t_layer(layer_name)
+        elif self.model_type == 'clip_vit':
+            return self._get_clip_vit_layer(layer_name)
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
     
@@ -61,6 +66,38 @@ class LayerActivationHelper:
         except (IndexError, AttributeError):
             raise ValueError(f"Invalid ViT layer index: {layer_idx}")
 
+    def _get_clip_vit_layer(self, layer_name: str) -> nn.Module:
+        """Get ViT layer."""
+        if isinstance(layer_name, tuple):
+            _, layer_idx = layer_name
+        else:
+            _, layer_idx = parse_layer_block(layer_name)
+
+        try:
+            return self.model.visual.transformer.resblocks[layer_idx].mlp[1]
+        except (IndexError, AttributeError):
+            raise ValueError(f"Invalid ViT layer index: {layer_idx}")
+
+    def _get_swin_t_layer(self, layer_name: str) -> nn.Module:
+        """Get a specific Swin-T block by its layer name (e.g., 'swin_t_block_3')."""
+        # Use parse_layer_block to extract the block index
+        if isinstance(layer_name, tuple):
+            layer_name, block_idx = layer_name
+        else:
+            layer_name, block_idx = parse_layer_block(layer_name)
+
+        current_block_idx = 0
+
+        # Iterate through model features to find the correct SwinTransformerBlock
+        for stage in self.model.features:
+            if isinstance(stage, nn.Sequential):
+                for block in stage:
+                    if isinstance(block, nn.Module) and block.__class__.__name__ == 'SwinTransformerBlock':
+                        if current_block_idx == block_idx:
+                            return block.mlp[1]
+                        current_block_idx += 1
+        
+        raise ValueError(f"Block {block_idx} not found in model")
 def parse_layer_block(layer_name: str) -> Tuple[str, int]:
     """Parse layer name into components based on model architecture."""
     if layer_name.startswith('layer'):  # ResNet format
@@ -68,12 +105,26 @@ def parse_layer_block(layer_name: str) -> Tuple[str, int]:
         if len(parts) != 2 or not parts[1].startswith('block'):
             raise ValueError(f"Invalid ResNet layer format: {layer_name}")
         return parts[0], int(parts[1][5:])
+
     elif layer_name.startswith('encoder_layer'):  # ViT format
         try:
             layer_num = int(layer_name.split('_')[2])
             return 'encoder_layer', layer_num
         except (IndexError, ValueError):
             raise ValueError(f"Invalid ViT layer format: {layer_name}")
+
+    elif layer_name.startswith('swin_t_block_'):  # Swin-T format
+        parts = layer_name.split('_')
+        if len(parts) < 4 or not parts[-1].isdigit():
+            raise ValueError(f"Invalid Swin-T layer format: {layer_name}. Expected format 'swin_t_block_X'.")
+        return 'swin_t_block', int(parts[-1])
+
+    elif layer_name.startswith('clip-vit_block_'):  # Swin-T format
+        parts = layer_name.split('_')
+        if len(parts) < 3 or not parts[-1].isdigit():
+            raise ValueError(f"Invalid Swin-T layer format: {layer_name}. Expected format 'clip-vit_block_X'.")
+        return 'clip_vit_block_', int(parts[-1])
+
     else:  # Unknown format
         raise ValueError(f"Unrecognized layer format: {layer_name}")
 
@@ -111,7 +162,12 @@ def get_activation(model: nn.Module,
     def hook_fn(module, input, output):
         if isinstance(output, tuple):  # Handle ViT output format
             output = output[0]  # Get the main output tensor
-        channel_activation = output[:, channel_idx, :, :] if model_type == 'resnet' else output[:, :, channel_idx]
+        if model_type == 'resnet':
+            channel_activation = output[:, channel_idx, :, :]
+        elif model_type == 'vit':
+            channel_activation = output[:, :, channel_idx]
+        elif model_type == 'swin_t':
+            channel_activation = output[:, :, :, channel_idx]
         activation.append(channel_activation.detach().cpu())
 
     img, _ = val_dataset[image_idx]
@@ -163,7 +219,14 @@ def get_activation_subset(model: nn.Module,
     def hook_fn(module, input, output):
         if isinstance(output, tuple):  # Handle ViT output format
             output = output[0]  # Get the main output tensor
-        channel_activation = output[:, channel_idx, :, :] if model_type == 'resnet' else output[:, :, channel_idx]
+        if model_type == 'resnet':
+            channel_activation = output[:, channel_idx, :, :]
+        elif model_type == 'vit':
+            channel_activation = output[:, :, channel_idx]
+        elif model_type == 'swin_t':
+            channel_activation = output[:, :, :, channel_idx]
+        elif model_type == 'clip_vit':
+            channel_activation = output[:, :, channel_idx]
         activations.append(channel_activation.detach().cpu())
     
     subset = Subset(val_dataset, indices)
@@ -172,12 +235,45 @@ def get_activation_subset(model: nn.Module,
     
     helper = LayerActivationHelper(model, model_type)
     target_block = helper.get_target_layer(layer_block)
-    
     with torch.no_grad(), target_block.register_forward_hook(hook_fn):
         for batch in subset_loader:
             images = batch[0].cuda()
-            _ = model(images)
+            if model_type == 'clip_vit':
+                _ = model.encode_image(images)
+            else:
+                _ = model(images)
             
+    return torch.cat(activations, dim=0)
+
+def get_corrupted_activation_subset(model: nn.Module,
+                        layer_block: str,
+                        corrupted_data: torch.Tensor,
+                        channel_idx: int,
+                        model_type: str = 'resnet',
+                        batch_size: int = 32) -> torch.Tensor:
+    """Get full feature maps for specified channels without taking mean."""
+    activations = []
+    
+    def hook_fn(module, input, output):
+        if isinstance(output, tuple):  # Handle ViT output format
+            output = output[0]  # Get the main output tensor
+        if model_type == 'resnet':
+            channel_activation = output[:, channel_idx, :, :]
+        elif model_type == 'vit':
+            channel_activation = output[:, :, channel_idx]
+        elif model_type == 'swin_t':
+            channel_activation = output[:, :, :, channel_idx]
+        elif model_type == 'clip_vit':
+            channel_activation = output[:, :, channel_idx]
+        activations.append(channel_activation.detach().cpu())
+    
+    
+    helper = LayerActivationHelper(model, model_type)
+    target_block = helper.get_target_layer(layer_block)
+    
+    with torch.no_grad(), target_block.register_forward_hook(hook_fn):
+        images = corrupted_data.cuda().unsqueeze(0)
+        _ = model(images)
     return torch.cat(activations, dim=0)
 
 def get_output_with_modified_activation(model: nn.Module,
@@ -198,6 +294,11 @@ def get_output_with_modified_activation(model: nn.Module,
             output_clone[:, channel_idx, :, :] = original_act
         elif model_type == 'vit':  # ViT
             output_clone[:, :, channel_idx] = original_act
+        elif model_type == 'swin_t':
+            output_clone[:, :, :, channel_idx] = original_act
+        elif model_type == 'clip_vit':
+            output_clone[:, :, channel_idx] = original_act.unsqueeze(1)
+            return output_clone.squeeze()
         return output_clone
     
     def hook_fn_target_block(module, input, output):
@@ -211,7 +312,10 @@ def get_output_with_modified_activation(model: nn.Module,
     handle2 = tgt_block.register_forward_hook(hook_fn_target_block)
     
     with torch.no_grad():
-        _ = model(image.unsqueeze(0).cuda())
+        if model_type == 'clip_vit':
+            _ = model.encode_image(image.unsqueeze(0).cuda())
+        else:
+            _ = model(image.unsqueeze(0).cuda())
     
     handle1.remove()
     handle2.remove()
@@ -224,7 +328,9 @@ def analyze_channel_score(model: nn.Module,
                         val_dataset: Dataset,
                         channel_idx: List[Tuple[int, List[int]]],
                         src_channel: int,
-                        model_type: str = 'resnet') -> torch.Tensor:
+                        model_type: str = 'resnet',
+                        patching_type: str = 'zero',
+                        corrupted_dataset: torch.Tensor = None) -> torch.Tensor:
     """Analyzes the impact of a channel by comparing original, masked, and amplified activations.
     
     Args:
@@ -245,6 +351,13 @@ def analyze_channel_score(model: nn.Module,
             
     # Get the original image
     img, _ = val_dataset[channel_idx[i][1][-1]]
+
+    # Generate corrupted images for all relevant indices
+    if patching_type == 'corrupted':
+        if corrupted_dataset is not None:
+            corrupted_img = corrupted_dataset[channel_idx[i][1][-1]]
+        else:
+            raise ValueError("corrupted_dataset is required when patching_type is 'corrupted'")
 
     # Get original activation
     input_A = get_activation_subset(
@@ -272,33 +385,59 @@ def analyze_channel_score(model: nn.Module,
         channel_idx=src_channel
     )
     
-    output_masked_A = get_output_with_modified_activation(
-        model=model,
-        model_type=model_type,
-        src_layer_block=src_layer_block,
-        tgt_layer_block=tgt_layer_block,
-        image=img,
-        original_act=masked_A,
-        channel_idx=src_channel
-    )
-    
-    # output_amplified_A = get_output_with_modified_activation(
-    #     model=model,
-    #     model_type=model_type,
-    #     src_layer_block=src_layer_block,
-    #     tgt_layer_block=tgt_layer_block,
-    #     image=img,
-    #     original_act=amplified_A,
-    #     channel_idx=src_channel
-    # )
+    if patching_type == 'zero':
+        output_masked_A = get_output_with_modified_activation(
+            model=model,
+            model_type=model_type,
+            src_layer_block=src_layer_block,
+            tgt_layer_block=tgt_layer_block,
+            image=img,
+            original_act=masked_A,
+            channel_idx=src_channel
+        )
+    elif patching_type == 'corrupted':
+        corrupted_act = get_corrupted_activation_subset(
+            model=model,
+            model_type=model_type,
+            layer_block=src_layer_block,
+            corrupted_data=corrupted_img,
+            channel_idx=src_channel
+        ).squeeze()
+
+        output_masked_A = get_output_with_modified_activation(
+            model=model,
+            model_type=model_type,
+            src_layer_block=src_layer_block,
+            tgt_layer_block=tgt_layer_block,
+            image=img,
+            original_act=corrupted_act,
+            channel_idx=src_channel
+        )
+    elif patching_type == 'double':
+        output_masked_A = get_output_with_modified_activation(
+            model=model,
+            model_type=model_type,
+            src_layer_block=src_layer_block,
+            tgt_layer_block=tgt_layer_block,
+            image=img,
+            original_act=amplified_A,
+            channel_idx=src_channel
+        )
 
     # Calculate differences
-    
     if model_type == 'resnet':
         # For ResNet: average over spatial dimensions (height, width)
         diff_masked = (output_org_A[0] - output_masked_A[0]).mean(dim=(1,2))
         # diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=(1,2))
-    else:
+    elif model_type == 'vit':
+        # For ViT: average over sequence length dimension
+        diff_masked = (output_org_A[0] - output_masked_A[0]).mean(dim=0)
+        # diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=0)
+    elif model_type == 'swin_t':
+        # For Swin-T: average over spatial dimensions (height, width)
+        diff_masked = (output_org_A[0] - output_masked_A[0]).mean(dim=(0,1))
+        # diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=(1,2))
+    elif model_type == 'clip_vit':
         # For ViT: average over sequence length dimension
         diff_masked = (output_org_A[0] - output_masked_A[0]).mean(dim=0)
         # diff_amplified = (output_amplified_A[0] - output_org_A[0]).mean(dim=0)

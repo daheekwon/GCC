@@ -5,5 +5,5 @@
 for i in $(shuf -i 0-49999 -n 50)
 do
     echo "Running analysis for sample $i"
-    python run_circuit_analysis.py --tgt_sample $i --pot_threshold 70
+    python run_circuit_analysis.py --tgt_sample $i --pot_threshold 90
 done

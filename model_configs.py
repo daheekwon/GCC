@@ -3,8 +3,10 @@ import torchvision.models as torch_models
 from torchvision.models import (
     ViT_B_16_Weights,
     ViT_L_16_Weights,
-    ViT_H_14_Weights
+    ViT_H_14_Weights,
+    Swin_T_Weights
 )
+import clip
 
 MODEL_CONFIGS = {
     # ResNet Configurations
@@ -56,7 +58,22 @@ MODEL_CONFIGS = {
         'image_size': 224,
         'model_type': 'vit',
         'model_fn': lambda: torch_models.vit_h_14(weights=ViT_H_14_Weights.IMAGENET1K_V1)
-    }
+    },
+    'swin_t': {
+        'hidden_dim': 96,
+        'image_size': 224,
+        'model_type': 'swin_t',
+        'model_fn': lambda: torch_models.swin_t(weights=Swin_T_Weights.IMAGENET1K_V1)
+    },
+    'clip_vit': {
+        'hidden_size': 768,
+        'num_attention_heads': 12,
+        'num_hidden_layers': 12,
+        'patch_size': 16,
+        'image_size': 224,
+        'model_type': 'clip_vit',
+        'model_fn': lambda: clip.load("ViT-B/16")[0]
+    },
 }
 
 def get_model_config(model_name: str) -> Dict[str, Any]:

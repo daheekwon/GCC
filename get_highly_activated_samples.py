@@ -17,11 +17,17 @@ class IntermediateLayerGetter(nn.Module):
         self.model_type = model_type
         self.activations = {}
         self.hooks = []
+        self.block_idx = 0
+        self.hidden_dims = []
         
         if model_type == 'resnet':
             self._register_resnet_hooks()
         elif model_type == 'vit':
             self._register_vit_hooks()
+        elif model_type == 'swin_t':
+            self._register_swin_t_hooks()
+        elif model_type == 'clip_vit':
+            self._register_clip_vit_hooks()
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
     
@@ -47,11 +53,51 @@ class IntermediateLayerGetter(nn.Module):
             )
             self.hooks.append(hook)
     
+    def _register_clip_vit_hooks(self):
+        """Register hooks for ViT architecture."""
+        
+        for layer_idx, layer in enumerate(self.model.visual.transformer.resblocks):
+            name = f'clip-vit_block_{layer_idx}'
+            # Hook for the output of each transformer block
+            hook = layer.mlp[1].register_forward_hook(
+                lambda m, inp, out, name=name: self.activations.update({name: out})
+            )
+            self.hooks.append(hook)
+
+    def _register_swin_t_hooks(self):
+
+        def hook_fn(name, module, input, output):
+            self.activations[name] = output
+        
+        """Register hooks for Swin-T architecture."""
+        for stage in self.model.features:
+            if isinstance(stage, nn.Sequential):
+                for block in stage:
+                    if block.__class__.__name__ == 'SwinTransformerBlock':
+                        block_name = f'swin_t_block_{self.block_idx}'
+
+                        try:
+                            # Get hidden dim from MLP
+                            hidden_dim = block.mlp[0].out_features
+                            self.hidden_dims.append(hidden_dim)
+
+                            def make_hook(curr_name):
+                                return lambda m, i, o: hook_fn(curr_name, m, i, o)
+
+                            hook = block.mlp[1].register_forward_hook(make_hook(block_name))
+                            self.hooks.append(hook)
+                            self.block_idx += 1
+                        except AttributeError as e:
+                            print(f"Block {block_name} missing expected MLP structure: {e}")
+
     def forward(self, x):
         """Forward pass through the model."""
         with torch.no_grad():
-            _ = self.model(x)
-            if self.model_type == 'vit':
+            if self.model_type == 'clip_vit':
+                _ = self.model.encode_image(x)
+            else:
+                _ = self.model(x)
+            if self.model_type == 'vit' or self.model_type == 'clip_vit':
                 # Process ViT activations to match expected format
                 processed_activations = {}
                 # Sort keys numerically based on layer number
@@ -74,16 +120,24 @@ def get_top_k_activations(feature_map, k=0.1, model_type='resnet'):
     if model_type == 'resnet':
         B, C, H, W = feature_map.shape
         k_pixels = int(H * W * k)
-        feature_map_flat = feature_map.permute(0, 1, 2, 3).reshape(B, C, -1)
-    else:  # ViT
+        feature_map_flat = feature_map.reshape(B, C, -1).permute(0, 2, 1)
+    elif model_type == 'vit':  # ViT
         B, N, C = feature_map.shape  # N is number of tokens
         k_pixels = int(C * k)
         feature_map_flat = feature_map.permute(0, 2, 1)  # [B, C, N] C = 197
+    elif model_type == 'clip_vit':
+        C, N, B = feature_map.shape  # N is number of tokens
+        k_pixels = int(C * k)
+        feature_map_flat = feature_map.permute(2, 0, 1)  # [B, C, N] C = 197
+    elif model_type == 'swin_t':
+        B, H, W, C = feature_map.shape  # N is number of tokens
+        k_pixels = int(H * W * k)
+        feature_map_flat = feature_map.permute(0, 3, 1, 2).reshape(B, C, -1)  # [B, C, H, W] 
+        feature_map_flat = feature_map_flat.permute(0, 2, 1)
 
     # Use torch.kthvalue for memory efficiency
     top_k_vals = torch.sort(feature_map_flat, dim=1, descending=True)[0]
     top_k_vals = top_k_vals[:, :k_pixels, :]
-    
     return top_k_vals.mean(dim=1)
 
 def save_checkpoint(results, args):
@@ -168,8 +222,10 @@ def main():
     for name, activation in activations.items():
         if model_config['model_type'] == 'resnet':
             channel_size = activation.shape[1]  # B, C, H, W
-        else:  # ViT
+        elif model_config['model_type'] == 'vit' or model_config['model_type'] == 'clip_vit':
             channel_size = activation.shape[1]  # B, H, N (after transpose)
+        elif model_config['model_type'] == 'swin_t':
+            channel_size = activation.shape[3]  # B, H, W, C
         # print(f"Layer {name} has {channel_size} channels")
         results[name] = [[] for _ in range(channel_size)]
     
@@ -184,7 +240,6 @@ def main():
         
         with torch.no_grad(), torch.cuda.amp.autocast():
             activations = intermediate_getter(images)
-            
             for block_name, feature_maps in activations.items():
                 top_activations = get_top_k_activations(
                     feature_maps, 

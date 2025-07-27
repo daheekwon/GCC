@@ -584,7 +584,7 @@ def build_circuit_graph_from_pickle(fname):
         connections = pickle.load(f)
 
     circuit = nx.DiGraph()
-    for src_layer, src_channel, tgt_layer, filtered_channels, filtered_scores, filtered_info_scores, return_level, scale, shape in connections['circuit']:
+    for src_layer, src_channel, tgt_layer, filtered_channels, filtered_scores, filtered_info_scores in connections['circuit']:
         for tgt_channel in filtered_channels:
             circuit.add_edge((src_layer, src_channel), (tgt_layer, tgt_channel), weight=filtered_scores[0], info_weight=filtered_info_scores[0])
     return circuit
