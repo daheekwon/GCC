@@ -7,12 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch
-from matplotlib import gridspec
-import pickle
-from pytorch_msssim import ssim
-import cv2 
-import matplotlib.gridspec as gridspec
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 
 class LayerActivationHelper:
     """Helper class to manage layer access in different model architectures."""
