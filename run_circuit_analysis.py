@@ -39,12 +39,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_metadata_path(args) -> str:
-    """Get path to the metadata file."""
-    samples_dir = f"/GCC/results/{args.model}/{args.dataset}/pot_{int(args.pot_threshold)}"
-    save_dir = os.path.join(samples_dir, f"{args.tgt_sample}")
-    os.makedirs(save_dir, exist_ok=True)
-    return os.path.join(save_dir, 'metadata.json')
 
 def filter_valid_channels(active_channels: List[Tuple[str, int]], model_type: str) -> List[Tuple[str, int]]:
     """Filter channels based on model architecture."""
@@ -97,8 +91,8 @@ def main():
     
     # Filter channels based on model architecture
     valid_channels = filter_valid_channels(active_channels, model_config['model_type'])
-    
-    metadata_path = get_metadata_path(args)
+
+
     print(f"\nFound {len(active_channels)} active channels")
     print(f"After filtering the last layer: {len(valid_channels)} channels remain")
     print("================================================")
@@ -136,7 +130,7 @@ def main():
         analyzer.tgt_layer_block = next_layer
 
         # Execute score-based filtering
-        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = analyzer.analyze_channel_impacts()
+        filtered_channels, filtered_scores, filtered_info_scores  = analyzer.analyze_channel_impacts()
 
         # Terminate when no connected channels found
         if len(filtered_channels) == 0:

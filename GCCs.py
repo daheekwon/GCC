@@ -91,12 +91,6 @@ class CircuitAnalyzer:
         # Load activation samples
         self.avg_activated_samples, self.highly_activated_samples = load_activation_samples(self.samples_dir)
         
-        # Initialize matrices for layer connections
-        # self.connection_matrices = self.initialize_connection_matrices()
-        
-        # Load or create metadata with model
-        self.metadata = load_or_create_metadata(self.save_dir, self.model, self.model_type)
-
     def initialize_connection_matrices(self):
         """Initialize sparse matrices for connections between consecutive layers."""
         connection_matrices = []
@@ -148,9 +142,10 @@ class CircuitAnalyzer:
         # Normalize scores and convert to numpy once
         normalized_scores = scores.cpu().numpy()
         if sum(normalized_scores) == 0:
-            print('!!!!!!!!!!!!!!!!!!')
             print(f"Warning: No meaningful scores for {self.tgt_layer_block}")
-            return np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
+            import pdb; pdb.set_trace()
+            
+            return np.array([]), np.array([]), np.array([])
         normalized_scores /= normalized_scores.sum()
         
         # Create linked channels mask instead of list
@@ -160,13 +155,12 @@ class CircuitAnalyzer:
                 linked_mask[i] = True
         
         # Filter non-zero linked channels more efficiently
-        # valid_mask = (normalized_scores != 0) & linked_mask
         valid_mask = (~np.isnan(normalized_scores)) & (normalized_scores != 0) & linked_mask
         scores_ls = normalized_scores[valid_mask]
         next_channel_pool = np.where(valid_mask)[0]
         
         if len(scores_ls) == 0:
-            return np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
+            return np.array([]), np.array([]), np.array([])
 
         # POT method
         threshold = np.percentile(scores_ls, self.pot_threshold)
@@ -176,7 +170,7 @@ class CircuitAnalyzer:
             # Fit GPD only to exceedances
             shape, _, scale = stats.genpareto.fit(exceedances,floc=0)
             
-            shape = np.max([shape, 0.00000000000000001])
+            shape = np.max([shape, 10e-10])
             scale = np.min([scale, np.std(exceedances)])
 
             # Calculate return level
@@ -186,27 +180,26 @@ class CircuitAnalyzer:
             return_level = threshold + scale/shape * ((N/Nx * (1-p))**(-shape) - 1)
 
             if return_level < 0:
-                return (np.array([]), np.array([]), np.array([]), return_level, shape, scale)
+                return (np.array([]), np.array([]), np.array([]))
             else:
                 # Apply return level threshold
                 outlier_mask = scores_ls > return_level
         else:
-            return (np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]))
+            return (np.array([]), np.array([]), np.array([]))
         
         filtered_channels = next_channel_pool[outlier_mask]
         filtered_scores = scores_ls[outlier_mask]
         
         if len(filtered_channels) == 0:
-            return (np.array([]), np.array([]), np.array([]), return_level, shape, scale)
+            return (np.array([]), np.array([]), np.array([]))
         
         # Compute activation overlaps more efficiently
-        # src_activations = set(self.avg_activated_samples[self.src_layer_block][self.src_channel])
         src_activations = set(self.highly_activated_samples[self.src_layer_block][self.src_channel])
         
         # Vectorize ratio calculations
         ratios = []
         for tgt_ch in filtered_channels:
-            # tgt_activations = set(self.avg_activated_samples[self.tgt_layer_block][tgt_ch])
+
             tgt_activations = set(self.highly_activated_samples[self.tgt_layer_block][tgt_ch])
             ratio = len(tgt_activations & src_activations) / len(tgt_activations)
             ratios.append(ratio)
@@ -214,7 +207,6 @@ class CircuitAnalyzer:
         # Calculate denominator ratios only once for all channels
         denom_ratios = []
         for tgt_ch in next_channel_pool:
-            # tgt_activations = set(self.avg_activated_samples[self.tgt_layer_block][tgt_ch])
             tgt_activations = set(self.highly_activated_samples[self.tgt_layer_block][tgt_ch])
             ratio = len(tgt_activations & src_activations) / len(tgt_activations)
             denom_ratios.append(ratio)
@@ -224,10 +216,7 @@ class CircuitAnalyzer:
         ratio_mask = np.array(ratios) > ratio_threshold
         return (filtered_channels[ratio_mask], 
                 filtered_scores[ratio_mask],
-                np.array(ratios)[ratio_mask],
-                return_level,
-                shape,
-                scale)
+                np.array(ratios)[ratio_mask])
 
     def analyze_channel_impacts(self):
         """Analyze channel impacts using scoring mechanism."""
@@ -268,9 +257,9 @@ class CircuitAnalyzer:
         )
         
         # Filter channels and get significant ones
-        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.filter_channels(scores)
+        filtered_channels, filtered_scores, filtered_info_scores = self.filter_channels(scores)
         
-        return filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale
+        return filtered_channels, filtered_scores, filtered_info_scores
 
     def _analyze_vit_channel_impacts(self):
         """Analyze channel impacts for ViT models."""
@@ -299,9 +288,9 @@ class CircuitAnalyzer:
         )
         
         # Filter channels and get significant ones
-        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.filter_channels(scores)
+        filtered_channels, filtered_scores, filtered_info_scores = self.filter_channels(scores)
         
-        return filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale
+        return filtered_channels, filtered_scores, filtered_info_scores
 
     def _analyze_clip_vit_channel_impacts(self):
         """Analyze channel impacts for ViT models."""
@@ -330,9 +319,9 @@ class CircuitAnalyzer:
         )
         
         # Filter channels and get significant ones
-        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.filter_channels(scores)
+        filtered_channels, filtered_scores, filtered_info_scores = self.filter_channels(scores)
         
-        return filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale
+        return filtered_channels, filtered_scores, filtered_info_scores
 
     def _analyze_swin_t_channel_impacts(self):
         """Analyze channel impacts for Swin-T models."""
@@ -360,186 +349,11 @@ class CircuitAnalyzer:
         )
         
         # Filter channels and get significant ones
-        filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.filter_channels(scores)
+        filtered_channels, filtered_scores, filtered_info_scores = self.filter_channels(scores)
         
-        return filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale
+        return filtered_channels, filtered_scores, filtered_info_scores
         
 
-    def visualize_activations(self):
-        """Visualize channel activations and their feature maps."""
-        # Create args-like object with required attributes
-        args_dict = {
-            'src_layer_block': self.src_layer_block,
-            'src_channel': self.src_channel,
-            'num_images': 10,
-            'save_plots': self.save_plots
-        }
-        args = type('Args', (), args_dict)
-        
-        visualize_channel_activations(
-            self.model, 
-            args, 
-            self.val_dataset, 
-            self.avg_activated_samples,
-            self.save_dir
-        )
-
-    def visualize_filtered_channels(self, filtered_channels):
-        """Visualize activation maps and highly activated samples for filtered channels."""
-        for ch_idx in filtered_channels:
-            # Check if file already exists - simplified filename
-            save_filename = os.path.join(
-                self.save_dir,
-                f'{self.tgt_layer_block}_ch_{ch_idx}_act.png'
-            )
-            
-            if os.path.exists(save_filename):
-                # print(f"Skipping visualization - file already exists: {self.tgt_layer_block}_ch_{ch_idx}_act")
-                continue
-                
-            # Create figure for this channel
-            fig = plt.figure(figsize=(20, 4.2))
-            gs = gridspec.GridSpec(2, 10)
-            gs.update(wspace=0, hspace=0)
-            
-            if self.save_plots:
-            # Get highly activated samples for this channel
-                imgs = save_vis_images(
-                    self.highly_activated_samples[self.tgt_layer_block][ch_idx],
-                    self.val_dataset,
-                    self.tgt_sample,
-                    10
-                )
-            
-            # Plot original images
-            for i, (idx, img) in enumerate(imgs):
-                ax = plt.subplot(gs[i])
-                ax.imshow(img)
-                if i == 0:
-                    ax.set_ylabel(f"Channel {ch_idx}", fontsize=15)
-                ax.set_xticks([])
-                ax.set_yticks([])
-            
-            # Plot activation maps
-            for i, (idx, _) in enumerate(imgs):
-                ax = plt.subplot(gs[i + 10])
-                activation_map = get_activation(
-                    self.model,
-                    self.tgt_layer_block,
-                    self.val_dataset,
-                    idx,
-                    ch_idx,
-                    model_type=self.model_type
-                )
-
-                if self.model_type == 'resnet':
-                    activation_map = activation_map.squeeze().cpu().numpy()
-                else:
-                    activation_map = activation_map.squeeze()[1:].reshape(14, 14).cpu().numpy()
-                ax.imshow(activation_map)
-                if i == 0:
-                    ax.set_ylabel(f"Channel {ch_idx}", fontsize=15)
-                ax.set_xticks([])
-                ax.set_yticks([])
-            
-            plt.tight_layout()
-            
-            # Save the figure with simplified filename
-            if self.save_plots:
-                plt.savefig(save_filename)
-                plt.close()
-            else:
-                plt.show()
-
-    def analyze_channel_connections_iteratively(self):
-        """Iteratively analyze connections starting from src_channel through all subsequent layers."""
-        layer_keys = list(self.avg_activated_samples.keys())
-        
-        current_src_layer_idx = layer_keys.index(self.src_layer_block)
-        current_src_channels = [self.src_channel]
-        
-        # Add initial source channel to metadata if not exists  ####여기가 좀 다르긴 함. 
-        if self.src_layer_block not in self.metadata:
-            self.metadata[self.src_layer_block] = {
-                'searched_channels': [],
-                # 'return_levels': {},
-                # 'scale': {},
-                # 'shape': {}
-            }
-        
-        if self.src_channel not in self.metadata[self.src_layer_block]['searched_channels']:
-            self.metadata[self.src_layer_block]['searched_channels'].append(self.src_channel)
-        
-        # Iterate through subsequent layers
-        for layer_idx in range(current_src_layer_idx, len(layer_keys) - 1):
-            current_src_layer = layer_keys[layer_idx]
-            next_layer = layer_keys[layer_idx + 1]
-            matrix_idx = layer_idx - current_src_layer_idx
-            next_src_channels = []
-            
-            print(f"Analyzing connections from {current_src_layer} to {next_layer}")
-            
-            # For each current source channel
-            for src_ch in current_src_channels:
-                self.src_layer_block = current_src_layer
-                self.src_channel = src_ch
-                self.tgt_layer_block = next_layer
-
-                filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = self.analyze_channel_impacts()
-                
-                # Store return level in metadata
-                # if next_layer not in self.metadata[current_src_layer]['return_levels']:
-                #     self.metadata[current_src_layer]['return_levels'] = {}
-                # print(return_level)
-                # self.metadata[current_src_layer]['return_levels'][str(src_ch)] = float(return_level)
-
-                # if next_layer not in self.metadata[current_src_layer]['scale']:
-                #     self.metadata[current_src_layer]['scale'] = {}
-                # self.metadata[current_src_layer]['scale'][str(src_ch)] = float(scale)
-
-                # if next_layer not in self.metadata[current_src_layer]['shape']:
-                #     self.metadata[current_src_layer]['shape'] = {}
-                # self.metadata[current_src_layer]['shape'][str(src_ch)] = float(shape)
-                
-                if len(filtered_channels) > 0:
-                    # Update connection matrix
-                    rows = np.full(len(filtered_channels), src_ch)
-                    cols = filtered_channels
-                    data = filtered_scores
-                    new_entries = sparse.csr_matrix(
-                        (data, (rows, cols)),
-                        shape=self.connection_matrices[matrix_idx].shape
-                    )
-                    self.connection_matrices[matrix_idx] = self.connection_matrices[matrix_idx] + new_entries
-                    
-                    # Update metadata with filtered channels
-                    for ch in filtered_channels:
-                        if ch not in self.metadata[next_layer]['searched_channels']:
-                            self.metadata[next_layer]['searched_channels'].append(int(ch))
-                    
-                    self.visualize_filtered_channels(filtered_channels)
-                    next_src_channels.extend(filtered_channels)
-            
-            # Save metadata after each layer analysis
-            self._save_metadata()
-            
-            current_src_channels = list(set(next_src_channels))
-            
-            if not current_src_channels:
-                print(f"No more connections found after layer {current_src_layer}")
-                break
-        
-        # Reset to original source layer and channel
-        self.src_layer_block = layer_keys[current_src_layer_idx]
-        self.src_channel = self.src_channel
-        
-        return self.connection_matrices
-
-    def _save_metadata(self):
-        """Save metadata to file."""
-        metadata_path = os.path.join(self.save_dir, 'metadata.json')
-        with open(metadata_path, 'w') as f:
-            json.dump(self.metadata, f, indent=4)
 
 def setup_environment(args, save_dir):
     """Setup GPU and output directory."""
@@ -574,119 +388,3 @@ def load_activation_samples(samples_dir):
         highly_activated_samples = pickle.load(f)
         
     return avg_activated_samples, highly_activated_samples
-
-def visualize_channel_activations(model, args, val_dataset, avg_activated_samples, save_dir):
-    """Visualize channel activations and their feature maps."""
-    fig = plt.figure(figsize=(20, 4.2))
-    gs = gridspec.GridSpec(2, args.num_images)
-    gs.update(wspace=0, hspace=0)
-
-    imgs = save_vis_images(
-        avg_activated_samples[args.src_layer_block][args.src_channel],
-        val_dataset,
-        args.tgt_sample,
-        args.num_images
-    )
-
-    # Plot original images
-    for i, (idx, img) in enumerate(imgs):
-        ax = plt.subplot(gs[i])
-        ax.imshow(img)
-        if i == 0:
-            ax.set_ylabel(f"Channel {args.src_channel}", fontsize=15)
-        ax.set_xticks([])
-        ax.set_yticks([])
-
-    # Plot activation maps
-    for i, (idx, _) in enumerate(imgs):
-        ax = plt.subplot(gs[i + args.num_images])
-        activation_map = get_activation(
-            model, 
-            args.src_layer_block,
-            val_dataset,
-            idx,
-            args.src_channel
-        )
-        ax.imshow(activation_map.squeeze().cpu().numpy())
-        if i == 0:
-            ax.set_ylabel(f"Channel {args.src_channel}", fontsize=15)
-        ax.set_xticks([])
-        ax.set_yticks([])
-
-    if args.save_plots:
-        plt.savefig(os.path.join(save_dir, f'{args.src_layer_block}_channel_{args.src_channel}_to_{args.tgt_layer_block}_activations.png'))
-        plt.close()
-    else:
-        plt.show()
-
-def load_or_create_metadata(save_dir, model=None, model_type='resnet'):
-    """Load existing metadata or create default if not exists."""
-    metadata_path = os.path.join(save_dir, 'metadata.json')
-    
-    if os.path.exists(metadata_path):
-        with open(metadata_path, 'r') as f:
-            return json.load(f)
-    
-    # Create default metadata with layer structure automatically
-    default_metadata = {}
-    
-    if model_type == 'resnet':
-        # ResNet layer structure
-        for layer_idx in range(1, 5):  # layer1 to layer4
-            layer = getattr(model, f'layer{layer_idx}')
-            for block_idx in range(len(layer)):
-                key = f'layer{layer_idx}_block{block_idx}'
-                default_metadata[key] = {
-                    'searched_channels': [],
-                }
-    elif model_type == 'vit':  # ViT
-        # ViT layer structure - ensure numerical ordering
-        num_layers = len(model.encoder.layers)
-        # Create sorted layer keys
-        layer_keys = [f'encoder_layer_{i}' for i in range(num_layers)]
-        # Sort numerically based on the layer number
-        layer_keys.sort(key=lambda x: int(x.split('_')[2]))
-        
-        for key in layer_keys:
-            default_metadata[key] = {
-                'searched_channels': [],
-            }
-    elif model_type == 'swin_t':   
-        block_idx = 0
-        for stage in model.features:
-            if isinstance(stage, nn.Sequential):
-                for block in stage:
-                    if isinstance(block, nn.Module) and block.__class__.__name__ == 'SwinTransformerBlock':
-                        key = f'swin_t_block_{block_idx}'
-                        default_metadata[key] = {'searched_channels': []}
-                        block_idx += 1
-    
-    return default_metadata
-
-def main():
-    args = parse_args()
-    analyzer = CircuitAnalyzer(args)
-    
-    # Perform iterative analysis
-    if args.tgt_sample is not None:
-        connection_matrices = analyzer.analyze_channel_connections_iteratively()
-        
-        # Save connection matrices
-        save_path = os.path.join(
-            analyzer.save_dir,
-            f'connection_matrices_from_{args.src_layer_block}_ch{args.src_channel}.pkl'
-        )
-        
-        save_data = {
-            'matrices': connection_matrices,
-            'src_layer_block': args.src_layer_block,
-            'src_channel': args.src_channel,
-            'tgt_sample': args.tgt_sample
-        }
-        
-        with open(save_path, 'wb') as f:
-            pickle.dump(save_data, f)
-        print(f"Saved connection matrices to {save_path}")
-
-if __name__ == '__main__':
-    main() 
