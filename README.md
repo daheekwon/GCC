@@ -31,7 +31,7 @@ Now, you are ready to explore deep vision models with GCC.
 - Modify the output directory path according to your setup.  
 
 ```
-python3 get_highly_activated_samples.py --model_name 'resnet50' --dataset 'imagenet' --n_samples 500 --out_dir '/GCC/results/'
+python3 get_highly_activated_samples.py --model_name resnet50 --dataset imagenet --n_samples 500 --out_dir /GCC/results/
 ```
 
  2) **Extract Granular Concept Circuits**: Run the following script to extract circuits for a given query.
