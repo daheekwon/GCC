@@ -43,7 +43,7 @@ def parse_args():
     # Output options
     parser.add_argument('--save_plots', type=bool, default=True,
                        help='Save plots instead of displaying')
-    parser.add_argument('--save_dir', type=str, default='/data8/dahee/circuit/results/',
+    parser.add_argument('--save_dir', type=str, default='/GCC/results/',
                        help='Save directory')
     
     # Add POT threshold parameter

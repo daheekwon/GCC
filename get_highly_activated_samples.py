@@ -164,7 +164,7 @@ def save_checkpoint(results, args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output_dir', type=str, default='/data8/dahee/circuit/results',
+    parser.add_argument('--output_dir', type=str, default='/GCC/results',
                       help='Base directory for saving results')
     parser.add_argument('--model_name', type=str, default='resnet50',
                       help='Model name (default: resnet50)')

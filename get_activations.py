@@ -44,7 +44,7 @@ def main():
     parser = argparse.ArgumentParser(description='Generate activation values for all channels')
     parser.add_argument('--model_name', type=str, default='resnet50')
     parser.add_argument('--dataset_name', type=str, default='imagenet')
-    parser.add_argument('--output_dir', type=str, default='/data8/dahee/circuit/results')
+    parser.add_argument('--output_dir', type=str, default='/GCC/results')
     parser.add_argument('--batch_size', type=int, default=32)
     
     args = parser.parse_args()

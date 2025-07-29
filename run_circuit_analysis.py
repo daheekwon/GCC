@@ -27,11 +27,11 @@ def parse_args():
                        help='Percentile threshold for Peak Over Threshold method')
     parser.add_argument('--save_plots', type=bool, default=True,
                        help='Save plots')
-    parser.add_argument('--save_dir', type=str, default='/data8/dahee/circuit/results',
+    parser.add_argument('--save_dir', type=str, default='/GCC/results',
                        help='Save directory')
     parser.add_argument('--dataset_path', type=str, default='/data/ImageNet1k/val',
                        help='Dataset path')
-    parser.add_argument('--corrupted_data', type=str, default='/data5/users/dahee/Concepts/corrupted_imagenet/corrupted_val_dataset.pt',
+    parser.add_argument('--corrupted_data', type=str, default='/GCC/corrupted_imagenet/corrupted_val_dataset.pt',
                        help='Corrupted data path')
     parser.add_argument('--patching_type', type=str, default='zero',
                        help='Patching type')
@@ -41,7 +41,7 @@ def parse_args():
 
 def get_metadata_path(args) -> str:
     """Get path to the metadata file."""
-    samples_dir = f"/data8/dahee/circuit/results/{args.model}/{args.dataset}/pot_{int(args.pot_threshold)}"
+    samples_dir = f"/GCC/results/{args.model}/{args.dataset}/pot_{int(args.pot_threshold)}"
     save_dir = os.path.join(samples_dir, f"{args.tgt_sample}")
     os.makedirs(save_dir, exist_ok=True)
     return os.path.join(save_dir, 'metadata.json')
@@ -110,7 +110,7 @@ def main():
     def run_main_analysis(current_src_layer, current_src_channel, analyzer, layer_keys, visited, computed_results):
         cache_key = (current_src_layer, current_src_channel)
 
-        # 이미 탐색한 노드는 재탐색 생략
+        # Skip re-searching already explored nodes
         if cache_key in visited:
             print(f"Skipping {current_src_layer} channel {current_src_channel} - already searched")
             return computed_results.get(cache_key, [])
@@ -123,28 +123,28 @@ def main():
 
         layer_idx = layer_keys.index(current_src_layer)
 
-        # Base case: 마지막 레이어 도달 시 종료
+        # Base case: terminate when reaching the last layer
         if layer_idx + 1 >= len(layer_keys):
             computed_results[cache_key] = []
             print(f"Reached last layer {current_src_layer} channel {current_src_channel}")
             return []
 
-        # Setup for analysis: 분석 대상 레이어 및 채널 설정
+        # Setup for analysis: set target layer and channel for analysis
         next_layer = layer_keys[layer_idx + 1]
         analyzer.src_layer_block = current_src_layer
         analyzer.src_channel = current_src_channel
         analyzer.tgt_layer_block = next_layer
 
-        # 스코어 기반 필터링 실행
+        # Execute score-based filtering
         filtered_channels, filtered_scores, filtered_info_scores, return_level, shape, scale = analyzer.analyze_channel_impacts()
 
-        # 연결된 채널이 없는 경우 종료
+        # Terminate when no connected channels found
         if len(filtered_channels) == 0:
             # print(f"No channels found for {current_src_layer} channel {current_src_channel}")
             computed_results[cache_key] = []
             return []
 
-        # 현재 노드의 결과 저장
+        # Save current node results
         results = [
             (current_src_layer, current_src_channel, next_layer, filtered_channels, filtered_scores, filtered_info_scores)
         ]
@@ -195,7 +195,7 @@ def main():
     visited = set()
     computed_results = {}
 
-    # 루트 노드 기준으로 탐색 시작
+    # Start exploration from root node
     for root_layer_name, root_channel_idx in tqdm(valid_channels, desc="Analyzing channels", total=len(valid_channels)):
         root_key = (root_layer_name, root_channel_idx)
         if root_key in visited:
@@ -210,7 +210,7 @@ def main():
             visited, computed_results
         )
 
-        # 탐색 결과 있을 때만 저장
+        # Save only when exploration results exist
         if len(circuit) > 0:
             save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, save_dir)
                # Save visited set as JSON
@@ -219,8 +219,7 @@ def main():
             with open(visited_save_path, 'w') as f:
                 json.dump(visited_list, f)
 
-            # save_circuit(circuit, root_layer_name, root_channel_idx, args.tgt_sample, f'/data8/dahee/circuit/results/resnet50/imagenet/{args.model}/')
-    
+
     # Final count of skipped channels
     print(f"\nCircuit analysis pipeline completed!")
 
