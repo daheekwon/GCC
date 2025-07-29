@@ -9,11 +9,11 @@ from PIL import Image
 import numpy as np
 import sys
 from tqdm import tqdm
-sys.path.append('/data5/users/dahee/Concepts/src_unified/utils')
+sys.path.append('/GCC/utils')
 from plot_crop_mask import crop_mask
 
 # Load the highly activated samples data
-with open('/data8/dahee/circuit/results/resnet50/imagenet/highly_activated_samples_top500.pkl', 'rb') as f:
+with open('/GCC/results/resnet50/imagenet/highly_activated_samples_top500.pkl', 'rb') as f:
     highly_activated_samples = pickle.load(f)
 print("Available keys in highly_activated_samples:", list(highly_activated_samples.keys())[:10], "...")
 

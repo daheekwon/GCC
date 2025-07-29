@@ -4,8 +4,6 @@ import math
 import torch
 import torch.nn.functional as F
 import torchvision
-# from datasets import get_dataset
-# from safetensors import safe_open
 from skimage.measure import regionprops
 from skimage.morphology import label
 from torchvision.transforms.functional import gaussian_blur
