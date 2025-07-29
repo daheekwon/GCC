@@ -1,4 +1,4 @@
-name: concept_circuit
+name: GCC
 channels:
   - conda-forge
   - defaults
@@ -106,4 +106,4 @@ dependencies:
       - typing-extensions==4.12.2
       - tzdata==2025.2
       - urllib3==1.26.13
-prefix: /home/miniconda3/envs/concept_circuit
+prefix: /home/miniconda3/envs/GCC

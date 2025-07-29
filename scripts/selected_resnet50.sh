@@ -1,7 +1,8 @@
-# !/bin/bash
+selected_samples=(4223 7674 39065)
 
-# Process every 50th image from 0 to 49999
-for ((i=0; i<50000; i+=50))
+
+# Iterate through the selected samples array
+for i in "${selected_samples[@]}"
 do
     echo "Running analysis for sample $i"
     python run_circuit_analysis.py --tgt_sample $i --pot_threshold 90 --gpu 0
